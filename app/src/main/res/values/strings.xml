@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OrienteerRun</string>
+    <string name="setup_title">OrienteerRun</string>
+    <string name="setup_subtitle">Generate your route, find the checkpoints.</string>
+    <string name="target_distance_km">Target distance (km)</string>
+    <string name="target_distance">Target Distance</string>
+    <string name="generate_route">Generate Route</string>
+    <string name="getting_gps">Getting GPS fix…</string>
+    <string name="generating_route">Generating route…</string>
+    <string name="start_run">Start Run</string>
+    <string name="stop_run">Stop Run</string>
+    <string name="route_preview">Route Preview</string>
+    <string name="active_run">Active Run</string>
+    <string name="distance">Distance</string>
+    <string name="time">Time</string>
+    <string name="pace">Pace</string>
+    <string name="checkpoints">Checkpoints</string>
+    <string name="est_time">Est. Time</string>
+    <string name="next_target">Next Target</string>
+    <string name="start_finish">Start / Finish</string>
+    <string name="run_tracking_channel_name">Run Tracking</string>
+    <string name="run_tracking_channel_desc">Displays active run distance and duration</string>
+    <string name="notification_title">OrienteerRun — Active Run</string>
+    <string name="free_for_personal_use">Free for personal use</string>
+    <string name="distance_straight_line_note">Straight-line distance; actual path may be longer.</string>
+    <string name="mark_unreachable">Can\'t reach it? Mark as unreachable</string>
+    <string name="view_map">View map</string>
+    <string name="back_to_run">Back to run</string>
+    <string name="export_pdf">Export PDF</string>
+    <string name="location_permission_required">Location permission is required to generate and track routes.</string>
+    <string name="request_permission">Request permission</string>
+    <string name="open_settings">Open settings</string>
+    <string name="cd_app_logo">OrienteerRun logo</string>
+    <string name="cd_view_previous_route">View previous route</string>
+    <string name="cd_run_history">Open run history</string>
+    <string name="cd_generate_route">Generate route</string>
+    <string name="cd_open_omap">Open O-map in browser</string>
+    <string name="cd_back">Back</string>
+    <string name="share_gpx_chooser">Share route file</string>
+    <string name="share_gpx_for_oomap">Share route as GPX</string>
+    <string name="export_dialog_body">Standard PDF saves a printable map from this screen.\n\nOpen O-map only opens the Oomap website centered on your start. The browser cannot read your route from that link.\n\nUse Share route as GPX to export checkpoints and the walking path. In Oomap, drag the GPX onto the map (see Oomap help: importing controls).</string>
+    <string name="export_share_gpx_hint">After sharing, save the GPX where you can open it on the device or computer that runs Oomap.</string>
+    <string name="settings_title">Settings</string>
+    <string name="cd_open_settings_screen">Open settings</string>
+    <string name="settings_section_appearance">Appearance</string>
+    <string name="settings_theme_system">System</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_section_route_generation">Route generation</string>
+    <string name="settings_air_tolerance_title">Air distance tolerance</string>
+    <string name="settings_air_tolerance_hint">How far the straight-line (air) loop distance may deviate from your chosen target. Wider tolerance = easier to find a route.</string>
+    <string name="settings_air_tolerance_value">±%.0f m from target</string>
+    <string name="settings_path_ratio_title">Walking path vs air limit</string>
+    <string name="settings_path_ratio_hint">Reject routes if the OSRM walking path is longer than this multiple of the air distance. Higher = twistier paths allowed (e.g. 1.30× = up to 30% longer on roads).</string>
+    <string name="settings_route_ratio_value">Max path / air: %.2f×</string>
+    <string name="settings_section_map">Map appearance</string>
+    <string name="settings_show_air_legs">Straight-line legs</string>
+    <string name="settings_show_air_legs_sub">Show dashed straight segments between checkpoints (planning cues).</string>
+    <string name="settings_show_air_labels">Leg distance labels</string>
+    <string name="settings_show_air_labels_sub">Show distance text at the midpoint of each straight-line leg.</string>
+    <string name="settings_show_walking_path">Walking path</string>
+    <string name="settings_show_walking_path_sub">Draw the OSRM path polyline on the map when available.</string>
+    <string name="settings_dark_basemap">Dark basemap</string>
+    <string name="settings_dark_basemap_sub">Use a dark Carto basemap instead of Mapnik (when not using O-map tiles).</string>
+</resources>

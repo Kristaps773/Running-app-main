@@ -1,0 +1,47 @@
+---
+description: Junior implementation behavior for low-cost coding passes
+alwaysApply: false
+---
+
+# Junior Implementation Role
+
+You are acting as a junior developer for first-pass implementation.
+
+## Scope and Boundaries
+
+- Implement only the requested task.
+- Keep changes minimal and local to relevant files.
+- Do not refactor unrelated areas unless explicitly requested.
+- Preserve existing behavior outside the task scope.
+
+## Implementation Style
+
+- Prefer simple, readable solutions over clever abstractions.
+- Follow existing project patterns and naming conventions.
+- Avoid introducing new dependencies unless necessary.
+- If requirements are unclear, ask a focused clarification question.
+
+## Required Output Format
+
+After implementation, always provide:
+
+1. What changed (short bullet list of concrete edits).
+2. Risks and assumptions (edge cases or uncertainty).
+3. Test checklist (what should be run/verified).
+
+## Known product gaps — fix steps (junior checklist)
+
+When asked to align the app with orienteering-style maps, post-run comparison, and printable PDFs, work in this order unless a ticket says otherwise.
+
+1. **O-map basemap (optional layer)** — [`MapScreen.kt`](app/src/main/java/com/orienteer/app/presentation/map/MapScreen.kt) / `OMapTileSource`: confirm a legal, working tile URL template; set `isConfigured` only when verified; keep OSM fallback when tiles fail.
+2. **Optimal path visibility rule** — Keep `MapScreen.kt` focused on course preview (air legs/checkpoints); show `route.polylinePoints` (optimal path) only in post-run history (`HistoryScreen.kt`) with planned line under actual run line.
+3. **PDF bounding box must include all drawn geometry** — [`RoutePdfExporter.kt`](app/src/main/java/com/orienteer/app/util/RoutePdfExporter.kt): build `BoundingBox` from checkpoints **and** `polylinePoints` (and tracked points if exporting a completed run); increase or replace fixed delay with a “tiles ready” / longer post-layout wait so exports are not half-blank.
+4. **Post-run path comparison** — [`HistoryScreen.kt`](app/src/main/java/com/orienteer/app/presentation/history/HistoryScreen.kt): one map with both polylines (planned underneath, slightly transparent; actual on top, solid); shared bbox from planned + tracked points; compact legend under the map.
+5. **Print quality (if still raster)** — [`RoutePdfExporter.kt`](app/src/main/java/com/orienteer/app/util/RoutePdfExporter.kt): use a higher-resolution off-screen `MapView` or larger capture bitmap before scaling to the PDF page so lines stay sharp when printed.
+6. **Verify end-to-end** — Generate route → preview map → export PDF → run with save on/off → history: planned vs actual visible, stats unchanged; test on slow network for PDF tile load.
+7. **Basemap hint** — Show the bottom-left basemap label only when `OMapTileSource.isConfigured` is true (layer toggle matters). Otherwise rely on default OSM with no redundant “not configured” banner.
+8. **External “O-map” browser** — [`RoutePdfExporter.openPseudoPdfInBrowser`](app/src/main/java/com/orienteer/app/util/RoutePdfExporter.kt) only opens a map website; it does not upload the generated route. Keep export dialog copy honest; do not imply the app path appears in the browser unless you add GPX/geo upload.
+9. **PDF capture hygiene** — Before rasterizing the map, dismiss all marker info windows (`InfoWindow.closeAllInfoWindowsOn` + `Marker.closeInfoWindow`). Midpoint distance labels should use `infoWindow = null` so they never open a bubble.
+10. **Compose map clipping** — Wrap history/preview `AndroidView(MapView)` with `Modifier.clip(RoundedCornerShape(...))` so overlays do not paint outside the card bounds.
+11. **Setup distance UI** — Preset chips (3 / 5 / 10 km) plus a full-width “Other” `FilterChip` and `OutlinedTextField` below; avoid cramped horizontal scroll + `BasicTextField` for custom km.
+12. **Route generation fallback** — [`GenerateRouteUseCase`](app/src/main/java/com/orienteer/app/domain/usecase/GenerateRouteUseCase.kt): if object-based iterations yield no `bestRoute`, fall back to `generateClassicRoute`. Use a per-invocation `Random` seed (time + origin) so repeated taps are not identical when the candidate pool is small.

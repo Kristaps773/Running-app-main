@@ -1,0 +1,72 @@
+package com.orienteer.app.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+// High-Performance Nature — from DESIGN.md / Stitch extracts
+val OrienteerBackground = Color(0xFF0B1326)
+val OrienteerOnBackground = Color(0xFFDAE2FD)
+val OrienteerSurface = Color(0xFF0B1326)
+val OrienteerSurfaceContainerLow = Color(0xFF131B2E)
+val OrienteerSurfaceContainer = Color(0xFF171F33)
+val OrienteerSurfaceContainerHigh = Color(0xFF222A3D)
+val OrienteerSurfaceContainerHighest = Color(0xFF2D3449)
+val OrienteerOnSurface = Color(0xFFDAE2FD)
+val OrienteerOnSurfaceVariant = Color(0xFFBCCAC0)
+val OrienteerPrimary = Color(0xFF68DBA9)
+val OrienteerOnPrimary = Color(0xFF003825)
+val OrienteerPrimaryContainer = Color(0xFF25A475)
+val OrienteerOnPrimaryContainer = Color(0xFF00311F)
+val OrienteerSecondary = Color(0xFF45DFA4)
+val OrienteerOnSecondary = Color(0xFF003825)
+val OrienteerSecondaryContainer = Color(0xFF00BD85)
+val OrienteerOnSecondaryContainer = Color(0xFF00452E)
+val OrienteerTertiary = Color(0xFF4EDEA3)
+val OrienteerOutline = Color(0xFF87948B)
+val OrienteerOutlineVariant = Color(0xFF3D4A42)
+val OrienteerError = Color(0xFFFFB4AB)
+
+/** Map replay: planned path (dashed gray in mockups). */
+val MapPlannedPath = Color(0xFF87948B)
+/** Map replay: actual GPS track. */
+val MapActualPath = Color(0xFF68DBA9)
+/** Air legs on route preview. */
+val MapAirLeg = Color(0xFF45DFA4)
+
+// ── Light: docs/DESIGN-LIGHT.md (Kinetic Trail — DESIGN (4).md) ──
+val LightBackground = Color(0xFFF9F9FF)
+val LightOnBackground = Color(0xFF151C27)
+val LightSurface = Color(0xFFF9F9FF)
+val LightOnSurface = Color(0xFF151C27)
+val LightOnSurfaceVariant = Color(0xFF3D4A42)
+val LightSurfaceContainerLowest = Color(0xFFFFFFFF)
+val LightSurfaceContainerLow = Color(0xFFF0F3FF)
+val LightSurfaceContainer = Color(0xFFE7EEFE)
+val LightSurfaceContainerHigh = Color(0xFFE2E8F8)
+val LightSurfaceContainerHighest = Color(0xFFDCE2F3)
+val LightSurfaceVariant = Color(0xFFDCE2F3)
+val LightPrimary = Color(0xFF006948)
+val LightOnPrimary = Color(0xFFFFFFFF)
+val LightPrimaryContainer = Color(0xFF00855D)
+val LightOnPrimaryContainer = Color(0xFFF5FFF7)
+val LightSecondary = Color(0xFF575E70)
+val LightOnSecondary = Color(0xFFFFFFFF)
+val LightSecondaryContainer = Color(0xFFD9DFF5)
+val LightOnSecondaryContainer = Color(0xFF5C6274)
+val LightTertiary = Color(0xFF825100)
+val LightOnTertiary = Color(0xFFFFFFFF)
+val LightTertiaryContainer = Color(0xFFA36700)
+val LightOnTertiaryContainer = Color(0xFFFFFBFF)
+val LightOutline = Color(0xFF6D7A72)
+val LightOutlineVariant = Color(0xFFBCCAC0)
+val LightSurfaceTint = Color(0xFF006C4A)
+val LightInverseSurface = Color(0xFF2A313D)
+val LightInverseOnSurface = Color(0xFFEBF1FF)
+val LightError = Color(0xFFBA1A1A)
+val LightOnError = Color(0xFFFFFFFF)
+val LightErrorContainer = Color(0xFFFFDAD6)
+val LightOnErrorContainer = Color(0xFF93000A)
+
+/** Light-mode map overlay colors (primary = route, secondary = air legs). */
+val LightMapPlannedPath = Color(0xFF6D7A72)
+val LightMapActualPath = Color(0xFF006948)
+val LightMapAirLeg = Color(0xFF575E70)

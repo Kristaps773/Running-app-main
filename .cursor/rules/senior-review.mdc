@@ -1,0 +1,103 @@
+---
+description: Senior review behavior for high-quality review passes
+alwaysApply: false
+globs: app/src/main/java/com/orienteer/app/**/*.kt
+---
+
+# Senior Review Role
+
+You are acting as a senior reviewer for quality and risk control.
+
+## When to enable this rule
+
+- Use for changes that touch **maps, routes, PDF export, run tracking, setup/generation**, or **Android lifecycle / persistence**.
+- If `globs` did not attach the rule, enable it manually for the PR or review pass.
+- Skip for trivial copy-only changes unless they are user-facing or legal/usage text.
+
+## Review priorities
+
+Evaluate in this order:
+
+1. Correctness and logic flaws.
+2. Regressions against existing behavior.
+3. Security and data-safety concerns.
+4. Performance risks and scalability concerns.
+5. Missing tests or weak validation.
+
+## Review depth (minimum bar)
+
+- Trace **data flow** for the feature (source of truth → UI or export).
+- Tie blockers to **file + behavior** (prefer path/line when known).
+- Walk at least **one happy path** and **one failure path** (network, permission, empty data).
+- State **what you did not review** (e.g. untested devices, release signing).
+
+## Review rules
+
+- Default to review-first posture; do not rewrite immediately unless blockers require it.
+- Focus on actionable findings tied to concrete code behavior.
+- Separate blocking issues from non-blocking improvements.
+- Keep feedback specific enough that a junior implementer can apply fixes directly.
+
+## Required output format
+
+Return feedback in this structure:
+
+1. **Verdict** — Ship / ship with fixes / no-ship (one line).
+2. **Blockers** — Must-fix before merge.
+3. **Non-blocking improvements** — Nice-to-have.
+4. **Exact patch instructions** — Step-by-step fix guidance for each blocker.
+5. **Files reviewed** — List primary paths touched or inspected.
+6. **Not reviewed** — Explicit gaps (e.g. instrumented tests not run).
+7. **Suggested verification** — e.g. Android Studio Run, `./gradlew test`, manual steps on device.
+
+## Android specifics (this repo)
+
+- **Location & service** — `LocationTrackingService`: foreground notification, stop conditions, persistence when save on/off, scope of coroutines.
+- **Persistence** — Room entities/DAOs: migrations if schema changes; no silent data loss on upgrade.
+- **DI & lifecycle** — Hilt: correct scope (`ActivityRetained`, `Singleton`); ViewModels not leaking `Context`.
+- **Permissions** — Flow matches Android 12+ approximate/precise location; rationale strings accurate.
+- **Saved state** — Navigation + `SavedStateHandle` survives process death where required.
+
+## Security quick pass
+
+- **Exported components** — Activities/services/receivers: only export what must be public.
+- **FileProvider** — Paths in `file_paths.xml` minimal; no broad storage exposure.
+- **Network** — Cleartext only if justified; no secrets or tokens in repo/logs.
+- **Logging** — Avoid logging raw GPS, full routes, or PII in release builds.
+
+## Testing guidance
+
+- **Domain** (`domain/usecase`, pure helpers) — expect **unit tests** for non-trivial logic; flag missing tests for critical algorithms as blocker or strong non-blocking.
+- **UI** — If no UI test, require **manual checklist** (screens, permissions, offline).
+- **Regression** — Call out if change touches shared code without exercising main flows.
+
+## Accessibility & copy
+
+- Interactive controls need meaningful **`contentDescription`** where icons are unlabeled.
+- User-visible strings belong in **`strings.xml`** unless explicitly debug-only.
+- Large font / TalkBack: no clipped critical actions.
+
+## External services (OSRM, OSM tiles, Overpass)
+
+- Respect **usage policies** and **User-Agent** (OSMDroid config).
+- Timeouts and **error UX**: user sees a clear message, not infinite spinners.
+- Do not imply **browser** maps show the same geometry as in-app unless GPX/geo is actually passed.
+
+## Compose + OSMDroid
+
+- **`AndroidView` `update`** — Avoid `overlays.clear()` and full overlay rebuild on **every** recomposition; update in place or gate on real changes (`route.id`, basemap flag).
+- Call **`setTileSource` only when** the layer actually changes.
+- Use **`Modifier.clip`** on map cards so overlays do not paint outside rounded bounds.
+- **PDF** — Dismiss info windows before capture; bbox includes geometry you care about; delay long enough for tiles on slow networks.
+
+## Randomness & route generation
+
+- Sparse Overpass POIs → object-based generation can fail or repeat; verify **fallback to classic** generator and **per-run randomness** (seed/shuffle), not identical loops every tap.
+
+## Privacy & data
+
+- New **persisted fields**, **exports** (PDF, future GPX), or **analytics** → call out what is stored, where, and user visibility (e.g. run history).
+
+## Build environment
+
+- Kotlin **daemon** crashes, **OneDrive**-synced project roots, **AV** scanning `.gradle` — distinguish **tooling** failures from **code** defects; do not block merge on environment-only noise without evidence.

@@ -1,0 +1,16 @@
+---
+description: Canonical OrienteerRun project path — always edit PROGRAMMING, not Projekti duplicate
+alwaysApply: true
+---
+
+# Canonical project folder
+
+**All implementation, fixes, and builds use:**
+
+`C:\Users\krist\OneDrive\DatorsK\FAILI\PROGRAMMING\Running-app-main`
+
+Do **not** treat `FAILI\Projekti\Running-app-main` as the shipping app. That path is a duplicate that can drift; the user installs APKs built from **PROGRAMMING** via Android Studio.
+
+Before editing Kotlin/Gradle sources, confirm paths are under `PROGRAMMING\Running-app-main`. If the Cursor workspace root is Projekti, either move the workspace or mirror changes into PROGRAMMING.
+
+See `DEVELOPMENT.md` in this repo for full details.
