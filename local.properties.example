@@ -1,0 +1,16 @@
+## Copy to local.properties (gitignored) and fill in values.
+## Android Studio also writes sdk.dir=…
+
+# sdk.dir=C\:\\Users\\YOU\\AppData\\Local\\Android\\Sdk
+
+SENTRY_DSN=
+SENTRY_ORG=krists-kristaps-duda
+SENTRY_PROJECT=orienteerrun
+SENTRY_AUTH_TOKEN=
+
+PRIVACY_POLICY_URL=https://kristaps773.github.io/Running-app-main/privacy-policy.html
+
+STORE_FILE=
+STORE_PASSWORD=
+KEY_ALIAS=orienteer_upload
+KEY_PASSWORD=

@@ -8,9 +8,14 @@
 .externalNativeBuild
 .cxx
 local.properties
+sentry.properties
 *.jks
 *.keystore
 app/release/
 app/build/
 hs_err_pid*.log
 replay_pid*.log
+
+# Upload keystore backup (secrets)
+orienteer-upload-KEYSTORE-BACKUP.txt
+
