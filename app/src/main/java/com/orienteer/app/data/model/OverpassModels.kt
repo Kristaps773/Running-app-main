@@ -33,7 +33,8 @@ data class OverpassElement(
     companion object {
         val INTERESTING_KEYS = setOf(
             "amenity", "historic", "tourism", "natural",
-            "leisure", "man_made", "barrier", "highway"
+            "leisure", "man_made", "barrier", "highway",
+            "shop", "craft", "sport"
         )
     }
 }

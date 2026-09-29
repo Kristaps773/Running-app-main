@@ -80,10 +80,23 @@ class GenerateRouteUseCase @Inject constructor(
         private val TAG_WEIGHTS = mapOf(
             "historic=monument" to 1.6,
             "historic=memorial" to 1.5,
+            "historic=statue" to 1.55,
+            "historic=wayside_cross" to 1.45,
             "tourism=viewpoint" to 1.5,
             "tourism=artwork" to 1.4,
+            "tourism=information" to 1.35,
             "amenity=fountain" to 1.3,
-            "leisure=playground" to 1.2
+            "natural=peak" to 1.4,
+            "natural=rock" to 1.35,
+            "man_made=tower" to 1.45,
+            "leisure=playground" to 1.2,
+            "barrier=bollard" to 1.15,
+            "highway=bus_stop" to 1.1
+        )
+
+        private val OVERPASS_POI_KEYS = listOf(
+            "amenity", "historic", "tourism", "natural", "leisure",
+            "man_made", "barrier", "shop", "craft", "sport"
         )
     }
 
@@ -940,49 +953,47 @@ class GenerateRouteUseCase @Inject constructor(
                 val query = buildOverpassQuery(cp.position.latitude, cp.position.longitude)
                 overpass.query(query).elements
             }.getOrElse { emptyList() }
-            val (desc, name, tag) = CheckpointDescriptionGenerator.generate(cp.id, elements)
+            val ranked = rankElementsNear(cp.position, elements)
+            val (desc, name, tag) = CheckpointDescriptionGenerator.generate(cp.id, ranked)
             cp.copy(description = desc, landmarkName = name, landmarkType = tag)
         }
         return route.copy(checkpoints = enriched)
     }
 
-    private fun buildOverpassQuery(lat: Double, lon: Double): String = """
-        [out:json][timeout:8];
-        (
-          node["amenity"](around:130,$lat,$lon);
-          node["historic"](around:130,$lat,$lon);
-          node["tourism"](around:130,$lat,$lon);
-          node["natural"](around:130,$lat,$lon);
-          node["leisure"](around:130,$lat,$lon);
-          node["man_made"](around:130,$lat,$lon);
-          node["highway"~"bus_stop|traffic_signals|crossing"](around:130,$lat,$lon);
-          way["amenity"](around:130,$lat,$lon);
-          way["historic"](around:130,$lat,$lon);
-          way["tourism"](around:130,$lat,$lon);
-          way["natural"](around:130,$lat,$lon);
-          way["leisure"](around:130,$lat,$lon);
-          way["man_made"](around:130,$lat,$lon);
-        );
-        out center tags 12;
-    """.trimIndent()
+    private fun buildOverpassQuery(lat: Double, lon: Double): String =
+        buildAreaOverpassQuery(lat, lon, radiusM = 130, timeoutSec = 8, maxElements = 16)
 
-    private fun buildCandidateOverpassQuery(lat: Double, lon: Double, radiusM: Int): String = """
-        [out:json][timeout:6];
-        (
-          node["amenity"](around:$radiusM,$lat,$lon);
-          node["historic"](around:$radiusM,$lat,$lon);
-          node["tourism"](around:$radiusM,$lat,$lon);
-          node["natural"](around:$radiusM,$lat,$lon);
-          node["leisure"](around:$radiusM,$lat,$lon);
-          node["man_made"](around:$radiusM,$lat,$lon);
-          node["highway"~"bus_stop|traffic_signals|crossing"](around:$radiusM,$lat,$lon);
-          way["amenity"](around:$radiusM,$lat,$lon);
-          way["historic"](around:$radiusM,$lat,$lon);
-          way["tourism"](around:$radiusM,$lat,$lon);
-          way["natural"](around:$radiusM,$lat,$lon);
-          way["leisure"](around:$radiusM,$lat,$lon);
-          way["man_made"](around:$radiusM,$lat,$lon);
-        );
-        out center tags 18;
-    """.trimIndent()
+    private fun buildCandidateOverpassQuery(lat: Double, lon: Double, radiusM: Int): String =
+        buildAreaOverpassQuery(lat, lon, radiusM = radiusM, timeoutSec = 6, maxElements = 24)
+
+    /** Single union query (nodes + ways + relations) — fewer round-trips than separate node/way blocks. */
+    private fun buildAreaOverpassQuery(
+        lat: Double,
+        lon: Double,
+        radiusM: Int,
+        timeoutSec: Int,
+        maxElements: Int
+    ): String {
+        val poiLines = OVERPASS_POI_KEYS.joinToString("\n") { key ->
+            "  nwr[\"$key\"](around:$radiusM,$lat,$lon);"
+        }
+        return """
+            [out:json][timeout:$timeoutSec];
+            (
+            $poiLines
+              node["highway"~"bus_stop|traffic_signals|crossing"](around:$radiusM,$lat,$lon);
+            );
+            out center tags $maxElements;
+        """.trimIndent()
+    }
+
+    private fun rankElementsNear(anchor: GeoPoint, elements: List<OverpassElement>): List<OverpassElement> =
+        elements
+            .mapNotNull { e -> e.coordinateOrNull()?.let { coord -> e to GeoUtils.distanceMeters(anchor, coord) } }
+            .filter { (e, _) -> e.primaryTag != null }
+            .sortedWith(
+                compareBy<Pair<OverpassElement, Double>> { it.second }
+                    .thenByDescending { (e, _) -> TAG_WEIGHTS[e.primaryTag] ?: 1.0 }
+            )
+            .map { it.first }
 }

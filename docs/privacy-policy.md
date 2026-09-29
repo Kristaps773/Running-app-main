@@ -1,7 +1,7 @@
 # Privacy Policy — OrienteerRun
 
 **Last updated:** 26 September 2026  
-**Contact:** *[add your email before publishing]*
+**Contact:** kristapsduda773@gmail.com
 
 OrienteerRun (“the App”) is a free Android training app that generates GPS-verified orienteering-style running routes. This policy explains what data is involved when you use the App.
 

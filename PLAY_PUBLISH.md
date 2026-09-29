@@ -59,9 +59,12 @@ You cannot upload an AAB until this account is active and verified.
 Play requires a **public https** privacy page for location apps (not in-app only).
 
 1. Use the draft in [`docs/privacy-policy.md`](docs/privacy-policy.md).
-2. Host it (recommended: **GitHub Pages** on this repo):
-   - Settings → Pages → Deploy from branch → `/docs` or root `gh-pages`
-   - Or add a static `docs/privacy-policy.html` and enable Pages
+2. Host it (recommended: **GitHub Pages** on this repo — repo must be **public**):
+   - GitHub → **Settings → Pages**
+   - **Build and deployment:** Deploy from a branch
+   - **Branch:** `master` → folder **`/docs`** → Save
+   - Wait ~2 minutes; open `https://kristaps773.github.io/Running-app-main/privacy-policy.html`
+   - `docs/.nojekyll` is included so static HTML deploys as-is
 3. Expected URL shape (adjust to your user/org):  
    `https://<github-user>.github.io/Running-app-main/privacy-policy.html`
 4. Put the final URL in `local.properties` as `PRIVACY_POLICY_URL=...` (see below) and in Play Console → App content → Privacy policy.
