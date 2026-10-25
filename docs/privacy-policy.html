@@ -14,7 +14,7 @@
 </head>
 <body>
   <h1>Privacy Policy — OrienteerRun</h1>
-  <p class="muted"><strong>Last updated:</strong> 26 September 2026<br />
+  <p class="muted"><strong>Last updated:</strong> 25 October 2026<br />
   <strong>Contact:</strong> kristapsduda773@gmail.com</p>
 
   <p>OrienteerRun (“the App”) is a free Android training app that generates GPS-verified orienteering-style running routes. This policy explains what data is involved when you use the App.</p>
@@ -23,36 +23,43 @@
   <ul>
     <li>No user accounts, ads, or in-app purchases.</li>
     <li>Location is used to generate routes and track runs.</li>
-    <li>Route and run history stay on your device.</li>
-    <li>Optional crash diagnostics are sent to Sentry.</li>
-    <li>Map and routing use public OpenStreetMap-related services.</li>
+    <li>Route and run history stay on your device unless you export or share them.</li>
+    <li>Optional crash and performance diagnostics may be sent to Sentry.</li>
+    <li>Maps and routing use public OpenStreetMap-related services; tile requests reveal approximate map area to the selected provider.</li>
   </ul>
 
   <h2>Location</h2>
-  <p>While you generate a route or run with tracking active, the App uses precise location (GPS) via a <strong>foreground service</strong> and a visible notification. Location is used only for placing checkpoints, verifying visits, showing your position, and computing distance/pace. We do not request background location when you are not tracking a run. Location is not sold.</p>
+  <p>While you generate a route or run with tracking active, the App uses precise location (GPS), and may also use approximate location. Tracking runs through a <strong>foreground service</strong> with a visible notification (notification permission on Android 13+). Location is used only for placing checkpoints, verifying visits, showing your position, and computing distance/pace. We do not request the Android “background location” permission for continuous tracking when you are not in an active run session. Location is not sold and is not shared with other users.</p>
 
   <h2>Local storage</h2>
-  <p>Routes, run history, and preferences are stored on your device. They are not uploaded to an OrienteerRun backend (the App has no user accounts).</p>
+  <p>Routes, run history, map preferences, and a local map-tile cache are stored on your device. They are not uploaded to an OrienteerRun backend (the App has no user accounts). Android backup, if enabled on your device, may include app data according to your system settings.</p>
+
+  <h2>Exports you choose to share</h2>
+  <p>If you use <strong>GPX</strong> or <strong>PDF</strong> export, the App writes a file on your device and opens the system share sheet. You choose the destination. Exported files can include checkpoint coordinates, planned path geometry, and—for run exports—recorded GPS track points and timestamps. OrienteerRun does not upload those files to its own servers.</p>
 
   <h2>Network services (third parties)</h2>
   <table>
     <tr><th>Service</th><th>Purpose</th></tr>
-    <tr><td>OpenStreetMap / map tiles (e.g. Mapnik, Carto)</td><td>Map imagery</td></tr>
-    <tr><td>OSRM</td><td>Walking-path geometry</td></tr>
-    <tr><td>Overpass API</td><td>Nearby POIs for checkpoint labels</td></tr>
+    <tr><td>OpenStreetMap Mapnik tiles</td><td>Standard basemap imagery</td></tr>
+    <tr><td>CARTO (basemaps.cartocdn.com)</td><td>Optional dark basemap</td></tr>
+    <tr><td>OpenTopoMap</td><td>Optional topographic basemap</td></tr>
+    <tr><td>CyclOSM</td><td>Optional cycling/outdoors basemap</td></tr>
+    <tr><td>OpenOrienteeringMap (contour overlay)</td><td>Optional LiDAR-derived contour layer</td></tr>
+    <tr><td>OSRM (e.g. routing.openstreetmap.de, foot profile)</td><td>Walking-path geometry</td></tr>
+    <tr><td>Overpass API (e.g. overpass-api.de)</td><td>Nearby POIs for checkpoint labels</td></tr>
   </table>
-  <p>Map data © OpenStreetMap contributors. Those providers’ own terms apply.</p>
+  <p>Map data © OpenStreetMap contributors. Which tile hosts are contacted depends on the map style you select. Those providers’ own terms apply.</p>
 
   <h2>Crash diagnostics (Sentry)</h2>
-  <p>If configured, the App may send crash reports and limited performance data to <a href="https://sentry.io/">Sentry</a> (device model, OS, app version, stack traces). This helps fix bugs. Data is not sold or used for ads. See <a href="https://sentry.io/privacy/">Sentry’s privacy policy</a>.</p>
+  <p>If configured, the App may send crash reports and limited performance data to <a href="https://sentry.io/">Sentry</a> (device model, OS, app version, stack traces, sampled performance traces). Default personally identifiable information is not attached by the App. Data is not sold or used for ads. See <a href="https://sentry.io/privacy/">Sentry’s privacy policy</a>.</p>
 
   <h2>Children</h2>
-  <p>The App is not directed at children under 13.</p>
+  <p>The App is not directed at children under 13. Do not use it if you are under the age required in your country for consent to such processing.</p>
 
   <h2>Your choices</h2>
-  <p>You can deny location or notification permission in Android settings, clear app data, or uninstall. Contact us with privacy questions using the email above.</p>
+  <p>You can deny location or notification permission, change map style, clear app data or uninstall, and skip GPX/PDF share if you do not want files leaving the device. Contact us with privacy questions using the email above.</p>
 
   <h2>Changes</h2>
-  <p>We may update this policy when the App changes. The “Last updated” date will change accordingly.</p>
+  <p>We may update this policy when the App changes. The “Last updated” date will change accordingly. Continued use after an update means you accept the revised policy.</p>
 </body>
 </html>
