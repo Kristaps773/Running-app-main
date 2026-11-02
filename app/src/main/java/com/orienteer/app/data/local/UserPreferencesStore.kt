@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.orienteer.app.data.backup.BackupSettingsSnapshot
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -50,10 +51,20 @@ data class MapDisplayPreferences(
     val showAirLegLines: Boolean = true,
     val showAirLegDistanceLabels: Boolean = true,
     val showWalkingPathPolyline: Boolean = true,
-    val useDarkBasemap: Boolean = false
+    val basemapStyle: BasemapStyle = BasemapStyle.STANDARD,
+    val includePdfLegends: Boolean = false,
+    /** GPS “you are here” disc while an active run is on the map. */
+    val showYouAreHereDuringRun: Boolean = false,
+    /**
+     * Classic IOF purple overprint (triangle / hollow circles / finish) instead of app badges.
+     * Independent of [basemapStyle]; user toggles in Settings.
+     */
+    val useIofCourseOverprint: Boolean = false
 ) {
     /** Alias used by map screens. */
     val showAirLegs: Boolean get() = showAirLegLines
+
+    val useDarkBasemap: Boolean get() = basemapStyle == BasemapStyle.DARK
 }
 
 @Singleton
@@ -69,7 +80,11 @@ class UserPreferencesStore @Inject constructor(
     private val keyShowAirLegs = booleanPreferencesKey("show_air_leg_lines")
     private val keyShowAirLabels = booleanPreferencesKey("show_air_leg_distance_labels")
     private val keyShowWalkingPath = booleanPreferencesKey("show_walking_path_polyline")
+    private val keyShowYouAreHereDuringRun = booleanPreferencesKey("show_you_are_here_during_run")
+    private val keyIncludePdfLegends = booleanPreferencesKey("include_pdf_legends")
+    private val keyUseIofCourseOverprint = booleanPreferencesKey("use_iof_course_overprint")
     private val keyDarkBasemap = booleanPreferencesKey("use_dark_basemap")
+    private val keyBasemapStyle = stringPreferencesKey("basemap_style")
     private val keyThemeMode = stringPreferencesKey("theme_mode")
 
     val themeMode: Flow<AppThemeMode> = dataStore.data.map { p ->
@@ -99,11 +114,19 @@ class UserPreferencesStore @Inject constructor(
 
     val mapDisplayPreferences: Flow<MapDisplayPreferences> = dataStore.data.map { p ->
         val air = p[keyShowAirLegs] ?: DEFAULT_SHOW_AIR_LEGS
+        val basemapStyle = p[keyBasemapStyle]?.let(BasemapStyle::fromStorage)
+            ?: if (p[keyDarkBasemap] == true) BasemapStyle.DARK else DEFAULT_BASEMAP_STYLE
+        // Independent of basemap — do not auto-lock overprint to Pseud-O / Street-O.
+        val iofOverprint = p[keyUseIofCourseOverprint] ?: DEFAULT_USE_IOF_COURSE_OVERPRINT
         MapDisplayPreferences(
             showAirLegLines = air,
             showAirLegDistanceLabels = p[keyShowAirLabels] ?: DEFAULT_SHOW_AIR_LABELS,
             showWalkingPathPolyline = p[keyShowWalkingPath] ?: DEFAULT_SHOW_WALKING_PATH,
-            useDarkBasemap = p[keyDarkBasemap] ?: DEFAULT_DARK_BASEMAP
+            basemapStyle = basemapStyle,
+            includePdfLegends = p[keyIncludePdfLegends] ?: DEFAULT_INCLUDE_PDF_LEGENDS,
+            showYouAreHereDuringRun = p[keyShowYouAreHereDuringRun]
+                ?: DEFAULT_SHOW_YOU_ARE_HERE_DURING_RUN,
+            useIofCourseOverprint = iofOverprint
         ).let { prefs ->
             if (!air) prefs.copy(showAirLegDistanceLabels = false) else prefs
         }
@@ -123,6 +146,15 @@ class UserPreferencesStore @Inject constructor(
         }
     }
 
+    suspend fun setRouteGenerationPreset(preset: RouteGenerationPreset) {
+        dataStore.edit {
+            it[keyMaxPathToAir] = preset.maxPathToAirRatio
+                .coerceIn(MIN_RATIO.toFloat(), MAX_RATIO.toFloat())
+            it[keyAirToleranceM] = preset.airDistanceToleranceM
+                .coerceIn(MIN_AIR_TOLERANCE_M.toFloat(), MAX_AIR_TOLERANCE_M.toFloat())
+        }
+    }
+
     suspend fun setShowAirLegLines(value: Boolean) {
         dataStore.edit { prefs ->
             prefs[keyShowAirLegs] = value
@@ -138,24 +170,103 @@ class UserPreferencesStore @Inject constructor(
         dataStore.edit { it[keyShowWalkingPath] = value }
     }
 
+    suspend fun setShowYouAreHereDuringRun(value: Boolean) {
+        dataStore.edit { it[keyShowYouAreHereDuringRun] = value }
+    }
+
+    suspend fun setIncludePdfLegends(value: Boolean) {
+        dataStore.edit { it[keyIncludePdfLegends] = value }
+    }
+
+    suspend fun setUseIofCourseOverprint(value: Boolean) {
+        dataStore.edit { it[keyUseIofCourseOverprint] = value }
+    }
+
     suspend fun setUseDarkBasemap(value: Boolean) {
-        dataStore.edit { it[keyDarkBasemap] = value }
+        dataStore.edit {
+            it[keyDarkBasemap] = value
+            it[keyBasemapStyle] = if (value) BasemapStyle.DARK.name else BasemapStyle.STANDARD.name
+        }
+    }
+
+    suspend fun setBasemapStyle(style: BasemapStyle) {
+        dataStore.edit {
+            it[keyBasemapStyle] = style.name
+            it[keyDarkBasemap] = style == BasemapStyle.DARK
+            // Basemap only — do not flip IOF overprint / air-leg prefs when cycling styles.
+        }
     }
 
     suspend fun setThemeMode(mode: AppThemeMode) {
         dataStore.edit { it[keyThemeMode] = mode.name }
     }
 
+    suspend fun backupSnapshot(): BackupSettingsSnapshot {
+        val ratios = routeRatios.first()
+        val map = mapDisplayPreferences.first()
+        val theme = themeMode.first()
+        return BackupSettingsSnapshot(
+            themeMode = theme.name,
+            maxPathToAirRatio = ratios.maxPathToAirRatio.toFloat(),
+            airDistanceToleranceM = ratios.airDistanceToleranceM.toFloat(),
+            showAirLegLines = map.showAirLegLines,
+            showAirLegDistanceLabels = map.showAirLegDistanceLabels,
+            showWalkingPathPolyline = map.showWalkingPathPolyline,
+            basemapStyle = map.basemapStyle.name,
+            includePdfLegends = map.includePdfLegends,
+            showYouAreHereDuringRun = map.showYouAreHereDuringRun,
+            useIofCourseOverprint = map.useIofCourseOverprint
+        )
+    }
+
+    suspend fun restoreFromBackup(snapshot: BackupSettingsSnapshot) {
+        dataStore.edit { prefs ->
+            snapshot.themeMode?.let { prefs[keyThemeMode] = AppThemeMode.fromStorage(it).name }
+            snapshot.maxPathToAirRatio?.let {
+                prefs[keyMaxPathToAir] = it.coerceIn(MIN_RATIO.toFloat(), MAX_RATIO.toFloat())
+            }
+            snapshot.airDistanceToleranceM?.let {
+                prefs[keyAirToleranceM] =
+                    it.coerceIn(MIN_AIR_TOLERANCE_M.toFloat(), MAX_AIR_TOLERANCE_M.toFloat())
+            }
+            snapshot.showWalkingPathPolyline?.let { prefs[keyShowWalkingPath] = it }
+            snapshot.showYouAreHereDuringRun?.let { prefs[keyShowYouAreHereDuringRun] = it }
+            snapshot.includePdfLegends?.let { prefs[keyIncludePdfLegends] = it }
+            snapshot.useIofCourseOverprint?.let { prefs[keyUseIofCourseOverprint] = it }
+            snapshot.basemapStyle?.let { name ->
+                val style = BasemapStyle.fromStorage(name)
+                prefs[keyBasemapStyle] = style.name
+                prefs[keyDarkBasemap] = style == BasemapStyle.DARK
+            }
+            val showLegs = snapshot.showAirLegLines
+            if (showLegs != null) {
+                prefs[keyShowAirLegs] = showLegs
+                prefs[keyShowAirLabels] = if (showLegs) {
+                    snapshot.showAirLegDistanceLabels ?: DEFAULT_SHOW_AIR_LABELS
+                } else {
+                    false
+                }
+            } else {
+                snapshot.showAirLegDistanceLabels?.let { prefs[keyShowAirLabels] = it }
+            }
+        }
+    }
+
     companion object {
-        const val DEFAULT_MAX_PATH_TO_AIR = 1.5f
+        /** Defaults match [RouteGenerationPreset.BALANCED] (~1 in 10 strict-gate miss in matrix). */
+        const val DEFAULT_MAX_PATH_TO_AIR = 1.8f
         const val MIN_RATIO = 1.1
         const val MAX_RATIO = 2.5
-        const val DEFAULT_AIR_TOLERANCE_M = 700f
+        const val DEFAULT_AIR_TOLERANCE_M = 1500f
         const val MIN_AIR_TOLERANCE_M = 200.0
         const val MAX_AIR_TOLERANCE_M = 2500.0
         const val DEFAULT_SHOW_AIR_LEGS = true
         const val DEFAULT_SHOW_AIR_LABELS = true
         const val DEFAULT_SHOW_WALKING_PATH = true
+        const val DEFAULT_SHOW_YOU_ARE_HERE_DURING_RUN = false
+        const val DEFAULT_INCLUDE_PDF_LEGENDS = false
+        const val DEFAULT_USE_IOF_COURSE_OVERPRINT = false
         const val DEFAULT_DARK_BASEMAP = false
+        val DEFAULT_BASEMAP_STYLE: BasemapStyle = BasemapStyle.STANDARD
     }
 }

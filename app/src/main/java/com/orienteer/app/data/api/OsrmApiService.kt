@@ -1,7 +1,6 @@
 package com.orienteer.app.data.api
 
-import com.orienteer.app.data.model.OsrmNearestResponse
-import com.orienteer.app.data.model.OsrmRouteResponse
+import okhttp3.ResponseBody
 import retrofit2.http.GET
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -9,22 +8,23 @@ import retrofit2.http.Query
 /**
  * OSRM HTTP API (foot / walking profile).
  *
- * Public endpoint: https://router.project-osrm.org
- * Foot routing mirror: https://routing.openstreetmap.de/routed-foot
+ * Returns [ResponseBody] so release R8 minify cannot strip Kotlin `Continuation<T>`
+ * generics (that caused `Class cannot be cast to ParameterizedType` with Gson).
+ * Callers parse with `Gson.fromJson(..., OsrmNearestResponse::class.java)`.
  *
- * The coordinates path parameter format is: longitude,latitude (OSRM uses lng first).
+ * Foot routing mirror: https://routing.openstreetmap.de/routed-foot
  */
 interface OsrmApiService {
 
     /**
      * Snap a raw coordinate to the nearest road/path.
-     * @param coordinates  "longitude,latitude"
+     * @param coordinates  "longitude,latitude" (already URL-safe; must not re-encode `;`/`,`)
      */
     @GET("nearest/v1/foot/{coordinates}")
     suspend fun nearest(
-        @Path("coordinates") coordinates: String,
+        @Path(value = "coordinates", encoded = true) coordinates: String,
         @Query("number") number: Int = 1
-    ): OsrmNearestResponse
+    ): ResponseBody
 
     /**
      * Compute a walking route through multiple waypoints.
@@ -32,9 +32,10 @@ interface OsrmApiService {
      */
     @GET("route/v1/foot/{coordinates}")
     suspend fun route(
-        @Path("coordinates") coordinates: String,
-        @Query("overview") overview: String = "full",
+        @Path(value = "coordinates", encoded = true) coordinates: String,
+        // simplified = much smaller payload than full (generation was timing out on FOSSGIS).
+        @Query("overview") overview: String = "simplified",
         @Query("geometries") geometries: String = "geojson",
         @Query("steps") steps: Boolean = false
-    ): OsrmRouteResponse
+    ): ResponseBody
 }

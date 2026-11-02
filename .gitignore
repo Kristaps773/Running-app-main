@@ -1,5 +1,9 @@
 *.iml
 .gradle
+.jdk/
+.tmp-jdk*/
+.tmp-*.log
+.tmp-*.zip
 /local.properties
 /.idea
 .DS_Store
@@ -18,4 +22,34 @@ replay_pid*.log
 
 # Upload keystore backup (secrets)
 orienteer-upload-KEYSTORE-BACKUP.txt
+
+# Play upload bundles (local copies, not in git) — keep latest AAB only on disk
+store-assets/releases/
+*.aab
+
+# Local build / agent junk
+.tmp-*/
+.tmp-*
+*.log
+threaddump*.txt
+build-*.log
+bundle-release-*.log
+compile-*.log
+compose-preview-*.log
+gradle-wrapper-upgrade.log
+
+# One-off Play Console upload tooling (not product source)
+store-assets/_apk_extract/
+store-assets/_dbseed/
+store-assets/_upload_b64/
+store-assets/_play_upload/*.b64
+store-assets/_play_upload/*.bin
+store-assets/_play_upload/*.json
+store-assets/_play_upload/*.py
+store-assets/_play_upload/*.js
+store-assets/_play_upload/chunks_icon/
+store-assets/_play_upload/drive_payloads/
+store-assets/_play_upload/latin1/
+store-assets/_play_upload/_invoke/
+store-assets/_icon512_tmp.png
 

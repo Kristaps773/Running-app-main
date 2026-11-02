@@ -1,0 +1,90 @@
+OrienteerRun — Play Console upload (manual steps)
+=================================================
+Generated: 2026-09-30 after automated capture failed.
+
+WHY AUTOMATION STOPPED
+----------------------
+1) Physical Xiaomi `ofm7bq7xyxuchioj` is online over adb, but the screen is
+   PIN-locked ("Enter PIN or use fingerprint"). Automations cannot unlock it.
+2) Existing phone-01.png is the LOCK SCREEN (not the app). Do not use it as a
+   Play Store screenshot.
+3) Emulator Pixel_6_API_34 repeatedly stuck as `emulator-5554 offline` (never
+   reached boot_completed=1). Hung qemu/emulator processes were killed.
+4) Browser MCP cannot attach local files (icon / feature graphic / screenshots)
+   to Play Console upload dialogs — you must pick files manually.
+
+READY ASSETS (copy both places)
+-------------------------------
+Repo:
+  D:\PROJECTS\Running-app-main\store-assets\icon-512.png
+  D:\PROJECTS\Running-app-main\store-assets\feature-graphic-1024x500.png
+  D:\PROJECTS\Running-app-main\store-assets\STORE_LISTING.txt
+
+Desktop folder (for easy browsing):
+  C:\Users\pc\Desktop\PlayStore-OrienteerRun-Assets\
+    01-app-icon-512.png
+    02-feature-graphic-1024x500.png
+    03-STORE_LISTING.txt
+    04-phone-screenshot-01.png   ← LOCK SCREEN — replace / do not upload
+
+A. Capture real phone screenshots (required: ≥2 distinct app screens)
+--------------------------------------------------------------------
+SDK adb: D:\Android\Sdk\platform-tools\adb.exe
+
+1. Unlock the Xiaomi with your PIN/fingerprint (keep USB debugging on).
+2. Open OrienteerRun (com.orienteer.app). Grant location if prompted.
+3. In PowerShell:
+
+   $adb = "D:\Android\Sdk\platform-tools\adb.exe"
+   $dev = "ofm7bq7xyxuchioj"
+   $out = "D:\PROJECTS\Running-app-main\store-assets\screenshots"
+   $desk = "$env:USERPROFILE\Desktop\PlayStore-OrienteerRun-Assets"
+
+   & $adb -s $dev shell pm grant com.orienteer.app android.permission.ACCESS_FINE_LOCATION
+   & $adb -s $dev shell pm grant com.orienteer.app android.permission.ACCESS_COARSE_LOCATION
+   & $adb -s $dev shell pm grant com.orienteer.app android.permission.POST_NOTIFICATIONS
+
+4. Navigate in-app, then capture (repeat for each screen):
+
+   # Setup screen → phone-02
+   & $adb -s $dev shell screencap -p /sdcard/phone-02.png
+   & $adb -s $dev pull /sdcard/phone-02.png "$out\phone-02.png"
+   Copy-Item -Force "$out\phone-02.png" "$desk\05-phone-screenshot-02.png"
+
+   # Map / route preview → phone-03
+   & $adb -s $dev shell screencap -p /sdcard/phone-03.png
+   & $adb -s $dev pull /sdcard/phone-03.png "$out\phone-03.png"
+   Copy-Item -Force "$out\phone-03.png" "$desk\06-phone-screenshot-03.png"
+
+   # Active run OR History → phone-04
+   & $adb -s $dev shell screencap -p /sdcard/phone-04.png
+   & $adb -s $dev pull /sdcard/phone-04.png "$out\phone-04.png"
+   Copy-Item -Force "$out\phone-04.png" "$desk\07-phone-screenshot-04.png"
+
+Suggested distinct screens: Setup (distance + Generate), Map with route,
+Active run HUD, History list.
+
+Optional mock GPS (emulator only):
+  adb -s emulator-5554 emu geo fix 24.1052 56.9496
+
+B. Play Console — Main store listing
+------------------------------------
+1. Open: https://play.google.com/console → OrienteerRun
+2. Grow → Store presence → Main store listing (or Store listings)
+3. Paste text from STORE_LISTING.txt / 03-STORE_LISTING.txt:
+   - App name: OrienteerRun
+   - Short description (≤80 chars)
+   - Full description
+4. Graphics — click each upload control and pick from Desktop folder:
+   - App icon:        01-app-icon-512.png
+   - Feature graphic: 02-feature-graphic-1024x500.png
+   - Phone screenshots: 05-, 06-, 07- (at least TWO real app screens)
+5. Save / Submit listing draft.
+
+C. Still needed elsewhere (see PLAY_CONSOLE_REMAINING.md)
+---------------------------------------------------------
+Contact email, target audience, content rating, data safety, then closed
+testing → production.
+
+Privacy: https://kristaps773.github.io/Running-app-main/privacy-policy.html
+Contact: kristapsduda773@gmail.com

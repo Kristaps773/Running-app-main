@@ -43,12 +43,58 @@ data class Route(
                     checkpoints[i + 1].position
                 )
             }
-            total += GeoUtils.distanceMeters(
-                checkpoints.last().position,
-                checkpoints.first().position
-            )
+            // Closing leg only when finish is not already appended as a trailing isStart.
+            if (!hasTrailingFinish) {
+                total += GeoUtils.distanceMeters(
+                    checkpoints.last().position,
+                    checkpoints.first().position
+                )
+            }
             return total
         }
+
+    /** True when the last checkpoint is a return-to-start finish (distinct from the sole start entry). */
+    val hasTrailingFinish: Boolean
+        get() = checkpoints.size >= 2 &&
+            checkpoints.last().isStart &&
+            checkpoints.count { it.isStart } >= 2
+
+    /**
+     * True when the trailing finish is at a different place than the start (one-way course).
+     */
+    val isOneWayCourse: Boolean
+        get() {
+            if (!hasTrailingFinish || checkpoints.isEmpty()) return false
+            val start = checkpoints.first().position
+            val finish = checkpoints.last().position
+            return start.latitude != finish.latitude || start.longitude != finish.longitude
+        }
+
+    /**
+     * Ensures a trailing finish checkpoint. Default [finishPosition] is start (return-to-start).
+     * Pass a different point for one-way courses. No-op when already present.
+     */
+    fun withFinishCheckpoint(finishPosition: GeoPoint? = null): Route {
+        if (checkpoints.isEmpty() || hasTrailingFinish) return this
+        val start = checkpoints.first()
+        val from = checkpoints.last()
+        val at = finishPosition ?: start.position
+        val returnToStart =
+            at.latitude == start.position.latitude && at.longitude == start.position.longitude
+        val finishId = (checkpoints.maxOfOrNull { it.id } ?: 0) + 1
+        val finish = Checkpoint(
+            id = finishId,
+            position = at,
+            description = if (returnToStart) {
+                "Finish — return to start to complete your run."
+            } else {
+                "Finish — reach this point to complete your run."
+            },
+            isStart = true,
+            distanceFromPrev = GeoUtils.distanceMeters(from.position, at)
+        )
+        return copy(checkpoints = checkpoints + finish)
+    }
 
     /** True when OSRM has returned a walking-path distance (not straight-line placeholder). */
     val hasRoutedWalkingPath: Boolean

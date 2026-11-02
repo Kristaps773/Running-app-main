@@ -3,6 +3,7 @@ package com.orienteer.app.di
 import android.content.Context
 import androidx.room.Room
 import com.orienteer.app.data.local.AppDatabase
+import com.orienteer.app.data.local.AppDatabaseMigrations
 import com.orienteer.app.data.local.dao.RouteDao
 import com.orienteer.app.data.local.dao.RunSessionDao
 import dagger.Module
@@ -20,7 +21,7 @@ object DatabaseModule {
     @Singleton
     fun provideAppDatabase(@ApplicationContext context: Context): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, "orienteer_db")
-            .fallbackToDestructiveMigration()
+            .addMigrations(*AppDatabaseMigrations.ALL)
             .build()
 
     @Provides

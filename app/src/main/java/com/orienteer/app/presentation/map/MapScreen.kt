@@ -2,11 +2,7 @@ package com.orienteer.app.presentation.map
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DirectionsRun
-import androidx.compose.material.icons.filled.Flag
-import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.Schedule
+import com.orienteer.app.ui.icons.OrienteerIcons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -14,13 +10,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.orienteer.app.R
+import com.orienteer.app.util.PdfExportScale
+import com.orienteer.app.util.RoutePdfExporter
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.orienteer.app.presentation.components.*
 import com.orienteer.app.presentation.setup.SetupUiState
+import com.orienteer.app.ui.components.OrienteerGhostButton
 import com.orienteer.app.presentation.setup.SetupViewModel
+import com.orienteer.app.ui.theme.OrienteerSpacing
+import com.orienteer.app.ui.theme.mapOverlayColors
+import com.orienteer.app.data.local.BasemapStyle
+import com.orienteer.app.domain.ProAccess
 import com.orienteer.app.util.GeoUtils
 import org.osmdroid.util.GeoPoint as OsmGeoPoint
 import org.osmdroid.views.MapView
@@ -40,10 +48,23 @@ fun MapScreen(
     val generationRunning = setupUiState is SetupUiState.GeneratingRoute ||
         setupUiState is SetupUiState.RefiningRoute
     var mapViewRef by remember { mutableStateOf<MapView?>(null) }
+    var routeSheetExpanded by remember { mutableStateOf(true) }
+    var routeSheetVisibleHeightPx by remember { mutableFloatStateOf(0f) }
+    val mapColors = mapOverlayColors()
+    val primaryArgb = MaterialTheme.colorScheme.primary.toArgb()
+    val startArgb = MaterialTheme.colorScheme.tertiary.toArgb()
+    var showPdfScaleDialog by remember { mutableStateOf(false) }
+    var selectedPdfScale by remember { mutableStateOf<PdfExportScale?>(null) }
+    val context = LocalContext.current
+    val shareGpxLabel = stringResource(R.string.share_gpx_for_oomap)
+    val exportPdfLabel = stringResource(R.string.export_pdf)
 
     Box(modifier = Modifier.fillMaxSize()) {
         if (uiState.isLoading) {
-            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            RoutePlottingLoader(
+                modifier = Modifier.align(Alignment.Center),
+                label = "Plotting course…"
+            )
         } else if (uiState.error != null) {
             Text(
                 text = uiState.error!!,
@@ -57,7 +78,7 @@ fun MapScreen(
                     route = route,
                     currentLocation = uiState.currentLocation,
                     mapPrefs = mapPrefs,
-                    useDarkBasemap = mapPrefs.useDarkBasemap,
+                    basemapStyle = mapPrefs.basemapStyle,
                     interactive = true,
                     onMapReady = { mapViewRef = it },
                     modifier = Modifier
@@ -69,21 +90,24 @@ fun MapScreen(
                     title = "Route Preview",
                     showBack = true,
                     onBack = onNavigateBack,
-                    trailingIcon = Icons.Default.Layers,
-                    onTrailingClick = { },
-                    modifier = Modifier.align(Alignment.TopCenter)
+                    trailingIcon = OrienteerIcons.Layers,
+                    onTrailingClick = { viewModel.cycleBasemapStyle() },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .statusBarsPadding()
                 )
 
                 if (generationError != null) {
                     Surface(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
-                            .padding(top = 64.dp, start = 16.dp, end = 16.dp)
+                            .statusBarsPadding()
+                            .padding(top = 56.dp, start = OrienteerSpacing.md, end = OrienteerSpacing.md)
                             .fillMaxWidth(),
                         shape = MaterialTheme.shapes.medium,
                         color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.95f)
                     ) {
-                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        Column(modifier = Modifier.padding(horizontal = OrienteerSpacing.md, vertical = OrienteerSpacing.sm)) {
                             Text(
                                 text = "Route generation failed",
                                 style = MaterialTheme.typography.titleSmall,
@@ -93,7 +117,7 @@ fun MapScreen(
                                 text = generationError,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier.padding(top = 4.dp)
+                                modifier = Modifier.padding(top = OrienteerSpacing.xxs)
                             )
                         }
                     }
@@ -101,14 +125,15 @@ fun MapScreen(
                     Surface(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
-                            .padding(top = 64.dp, start = 16.dp, end = 16.dp)
+                            .statusBarsPadding()
+                            .padding(top = 56.dp, start = OrienteerSpacing.md, end = OrienteerSpacing.md)
                             .fillMaxWidth(),
                         shape = MaterialTheme.shapes.medium,
                         color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.92f)
                     ) {
-                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        Column(modifier = Modifier.padding(horizontal = OrienteerSpacing.md, vertical = OrienteerSpacing.sm)) {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(OrienteerSpacing.xs))
                             Text(
                                 text = "Refining walking path…",
                                 style = MaterialTheme.typography.labelMedium,
@@ -121,16 +146,33 @@ fun MapScreen(
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(top = 72.dp, end = 16.dp),
+                        .statusBarsPadding()
+                        .padding(top = 64.dp, end = OrienteerSpacing.md),
                     shape = MaterialTheme.shapes.extraLarge,
                     color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.9f)
                 ) {
                     Text(
-                        if (mapPrefs.useDarkBasemap) "Dark" else "Standard",
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        mapStyleShortLabel(mapPrefs.basemapStyle),
+                        modifier = Modifier.padding(horizontal = OrienteerSpacing.sm, vertical = OrienteerSpacing.xs),
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
+
+                MapAttributionBar(
+                    basemapStyle = mapPrefs.basemapStyle,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .navigationBarsPadding()
+                        .padding(
+                            start = OrienteerSpacing.sm,
+                            bottom = OrienteerSpacing.sm,
+                            end = OrienteerSpacing.sm
+                        )
+                        // Translate with the sheet — no layout pass every frame.
+                        .graphicsLayer {
+                            translationY = -routeSheetVisibleHeightPx
+                        }
+                )
 
                 FloatingActionButton(
                     onClick = {
@@ -140,20 +182,30 @@ fun MapScreen(
                         )
                     },
                     modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 16.dp),
+                        .align(Alignment.BottomEnd)
+                        .navigationBarsPadding()
+                        .padding(
+                            end = OrienteerSpacing.md,
+                            bottom = OrienteerSpacing.sm
+                        )
+                        .graphicsLayer {
+                            translationY = -routeSheetVisibleHeightPx
+                        },
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                     contentColor = MaterialTheme.colorScheme.primary
                 ) {
-                    Icon(Icons.Default.MyLocation, contentDescription = "Recenter")
+                    Icon(OrienteerIcons.MyLocation, contentDescription = "Recenter")
                 }
 
                 RouteBottomSheet(
-                    modifier = Modifier.align(Alignment.BottomCenter)
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                    expanded = routeSheetExpanded,
+                    onExpandedChange = { routeSheetExpanded = it },
+                    onVisibleHeightPxChanged = { routeSheetVisibleHeightPx = it }
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(OrienteerSpacing.xs)
                     ) {
                         DistanceStatCard(
                             label = "Air",
@@ -162,24 +214,48 @@ fun MapScreen(
                         )
                         DistanceStatCard(
                             label = "Path",
-                            value = route.pathDistanceM?.let { path ->
-                                val ratio = route.pathToAirRatio
-                                val dist = GeoUtils.formatDistanceDetailed(path)
-                                ratio?.let { "$dist (${"%.2f".format(it)}× air)" } ?: dist
-                            } ?: if (route.isDraft || generationRunning) "Routing…" else "—",
+                            value = route.pathDistanceM?.let { GeoUtils.formatDistanceDetailed(it) }
+                                ?: if (route.isDraft || generationRunning) "Routing…" else "—",
+                            valueSuffix = route.pathDistanceM?.let {
+                                route.pathToAirRatio?.let { ratio -> "(${"%.1f".format(ratio)}× air)" }
+                            },
                             modifier = Modifier.weight(1f),
                             emphasized = true
                         )
                     }
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(OrienteerSpacing.md))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
-                        StatChip(Icons.Default.Flag, "${route.waypointCount}", "Checkpoints")
-                        StatChip(Icons.Default.Schedule, "${(route.estimatedDurationS / 60).toInt()} min", "Est. time")
+                        StatChip(OrienteerIcons.Flag, "${route.waypointCount}", "Checkpoints")
+                        StatChip(OrienteerIcons.Schedule, "${(route.estimatedDurationS / 60).toInt()} min", "Est. time")
                     }
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(OrienteerSpacing.md))
+                    if (!route.isDraft && generationError == null) {
+                        OrienteerGhostButton(
+                            text = shareGpxLabel,
+                            onClick = { RoutePdfExporter.shareRouteAsGpx(context, route) }
+                        )
+                        Spacer(Modifier.height(OrienteerSpacing.xs))
+                        if (ProAccess.canExportRoutePdf()) {
+                            OrienteerGhostButton(
+                                text = exportPdfLabel,
+                                onClick = {
+                                    val options = RoutePdfExporter.availableExportScales(
+                                        route,
+                                        mapPrefs.includePdfLegends
+                                    )
+                                    selectedPdfScale = RoutePdfExporter.recommendedExportScale(
+                                        route,
+                                        mapPrefs.includePdfLegends
+                                    ).takeIf { it in options } ?: options.firstOrNull()
+                                    showPdfScaleDialog = true
+                                }
+                            )
+                            Spacer(Modifier.height(OrienteerSpacing.xs))
+                        }
+                    }
                     PrimaryGreenButton(
                         text = when {
                             generationError != null -> "Generation failed"
@@ -188,9 +264,74 @@ fun MapScreen(
                         },
                         onClick = { onStartRun(route.id) },
                         enabled = !route.isDraft && generationError == null,
-                        leadingIcon = Icons.Default.DirectionsRun
+                        leadingIcon = OrienteerIcons.DirectionsRun
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(OrienteerSpacing.xs))
+                }
+
+                if (showPdfScaleDialog) {
+                    val scaleOptions = remember(route.id, mapPrefs.includePdfLegends) {
+                        RoutePdfExporter.availableExportScales(route, mapPrefs.includePdfLegends)
+                    }
+                    AlertDialog(
+                        onDismissRequest = { showPdfScaleDialog = false },
+                        title = { Text(stringResource(R.string.export_pdf_scale_title)) },
+                        text = {
+                            Column {
+                                Text(stringResource(R.string.export_pdf_scale_body))
+                                Spacer(Modifier.height(OrienteerSpacing.sm))
+                                scaleOptions.forEach { option ->
+                                    val selected = selectedPdfScale == option
+                                    FilterChip(
+                                        selected = selected,
+                                        onClick = { selectedPdfScale = option },
+                                        label = {
+                                            Text(
+                                                when (option) {
+                                                    is PdfExportScale.Fixed -> option.scale.label
+                                                    PdfExportScale.FitToPage ->
+                                                        stringResource(R.string.export_pdf_fit_to_page)
+                                                }
+                                            )
+                                        },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    val map = mapViewRef
+                                    val scale = selectedPdfScale
+                                    showPdfScaleDialog = false
+                                    if (map != null && scale != null) {
+                                        RoutePdfExporter.exportToPdf(
+                                            context = context,
+                                            mapView = map,
+                                            route = route,
+                                            includePdfLegends = mapPrefs.includePdfLegends,
+                                            exportScale = scale,
+                                            mapPrefs = mapPrefs,
+                                            mapColors = mapColors,
+                                            primaryColorArgb = primaryArgb,
+                                            startColorArgb = startArgb
+                                        )
+                                    }
+                                },
+                                enabled = selectedPdfScale != null
+                            ) {
+                                Text(stringResource(R.string.export_pdf_confirm))
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showPdfScaleDialog = false }) {
+                                Text(stringResource(R.string.export_pdf_cancel))
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -202,6 +343,16 @@ private fun rememberSetupUiState(setupViewModel: SetupViewModel?): SetupUiState?
     if (setupViewModel == null) return null
     val state by setupViewModel.uiState.collectAsStateWithLifecycle()
     return state
+}
+
+@Composable
+private fun mapStyleShortLabel(style: BasemapStyle): String = when (style) {
+    BasemapStyle.STANDARD -> stringResource(R.string.map_style_standard)
+    BasemapStyle.DARK -> stringResource(R.string.map_style_dark)
+    BasemapStyle.PSEUDO_O -> stringResource(R.string.map_style_pseudo_o)
+    BasemapStyle.STREET_O -> stringResource(R.string.map_style_street_o)
+    BasemapStyle.OPEN_TOPO -> stringResource(R.string.map_style_open_topo)
+    BasemapStyle.CYCLOSM -> stringResource(R.string.map_style_cyclosm)
 }
 
 private fun Modifier.mapVignette(background: Color): Modifier = drawWithContent {

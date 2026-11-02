@@ -40,6 +40,23 @@ class TrackRunUseCaseTest {
     }
 
     @Test
+    fun pausedSessionIgnoresGpsUpdates() {
+        val session = RunSession(
+            routeId = route.id,
+            trackedPoints = listOf(GeoPoint(56.95, 24.10)),
+            currentCheckpointIdx = 1,
+            isPaused = true,
+            pausedAt = 5_000L,
+            elapsedTimeMs = 5_000L
+        )
+        val point = GeoPoint(56.95005, 24.10005)
+
+        val updated = useCase(session, route, point, elapsedTimeMs = 5_000L, timestampMs = 6_000L)
+
+        assertEquals(session, updated)
+    }
+
+    @Test
     fun smallMoveAddsDistance() {
         val session = RunSession(
             routeId = route.id,
@@ -116,5 +133,29 @@ class TrackRunUseCaseTest {
 
         assertFalse(updated.isActive)
         assertNotNull(updated.finishedAt)
+    }
+
+    @Test
+    fun reachingLastWaypointDoesNotFinishUntilReturnToStart() {
+        val twoCpRoute = route // Start, CP1, Finish(at start)
+        val session = RunSession(
+            routeId = twoCpRoute.id,
+            trackedPoints = listOf(GeoPoint(56.95, 24.10)),
+            currentCheckpointIdx = 1
+        )
+        val nearCp1 = GeoPoint(56.95008, 24.10008)
+
+        val afterCp1 = useCase(session, twoCpRoute, nearCp1, elapsedTimeMs = 4000L, timestampMs = 4000L)
+
+        assertEquals(2, afterCp1.currentCheckpointIdx)
+        assertTrue(afterCp1.isActive)
+        assertEquals(null, afterCp1.finishedAt)
+
+        val atFinish = GeoPoint(56.95, 24.10)
+        val done = useCase(afterCp1, twoCpRoute, atFinish, elapsedTimeMs = 8000L, timestampMs = 8000L)
+
+        assertFalse(done.isActive)
+        assertNotNull(done.finishedAt)
+        assertEquals(8000L, done.checkpointReachedAtMs[2])
     }
 }

@@ -39,3 +39,10 @@ If the workspace is opened on `Projekti\Running-app-main`, verify every change l
 ## Quick verify before a device test
 
 In Android Studio: **File → Open Recent** (or project title bar) should show `PROGRAMMING\Running-app-main`, not `Projekti\Running-app-main`.
+
+## Data backup (local-first)
+
+- Run history and settings are on-device (Room + DataStore). Clear storage / reinstall wipes them.
+- Settings → **Export backup** / **Import backup** is the supported restore path (optional; no account required).
+- Google Auto Backup may restore settings prefs but **excludes** the Room DB (GPS tracks) — see `res/xml/backup_rules.xml` and `data_extraction_rules.xml`.
+- **Deferred:** optional sign-in + cloud sync. Do not add until local export/import is shipped and product needs automatic cross-device restore. Guest mode stays the default.

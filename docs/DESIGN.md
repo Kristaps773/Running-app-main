@@ -1,108 +1,134 @@
 ---
-name: High-Performance Nature
+name: Alpine Trail & Field Showcase
 colors:
-  surface: '#0b1326'
-  surface-dim: '#0b1326'
-  surface-bright: '#31394d'
-  surface-container-lowest: '#060e20'
-  surface-container-low: '#131b2e'
-  surface-container: '#171f33'
-  surface-container-high: '#222a3d'
-  surface-container-highest: '#2d3449'
-  on-surface: '#dae2fd'
-  on-surface-variant: '#bccac0'
-  inverse-surface: '#dae2fd'
-  inverse-on-surface: '#283044'
-  outline: '#87948b'
-  outline-variant: '#3d4a42'
-  surface-tint: '#68dba9'
-  primary: '#68dba9'
-  on-primary: '#003825'
-  primary-container: '#25a475'
-  on-primary-container: '#00311f'
-  inverse-primary: '#006c4a'
-  secondary: '#45dfa4'
-  on-secondary: '#003825'
-  secondary-container: '#00bd85'
-  on-secondary-container: '#00452e'
-  tertiary: '#4edea3'
-  on-tertiary: '#003824'
-  tertiary-container: '#00a572'
-  on-tertiary-container: '#00311f'
-  error: '#ffb4ab'
-  on-error: '#690005'
-  error-container: '#93000a'
-  on-error-container: '#ffdad6'
-  primary-fixed: '#85f8c4'
-  primary-fixed-dim: '#68dba9'
-  on-primary-fixed: '#002114'
-  on-primary-fixed-variant: '#005137'
-  secondary-fixed: '#68fcbf'
-  secondary-fixed-dim: '#45dfa4'
-  on-secondary-fixed: '#002114'
-  on-secondary-fixed-variant: '#005137'
-  tertiary-fixed: '#6ffbbe'
-  tertiary-fixed-dim: '#4edea3'
-  on-tertiary-fixed: '#002113'
-  on-tertiary-fixed-variant: '#005236'
-  background: '#0b1326'
-  on-background: '#dae2fd'
-  surface-variant: '#2d3449'
+  surface: '#f0fdf1'
+  surface-dim: '#d0ddd2'
+  surface-bright: '#f0fdf1'
+  surface-container-lowest: '#ffffff'
+  surface-container-low: '#eaf7eb'
+  surface-container: '#e4f1e5'
+  surface-container-high: '#deece0'
+  surface-container-highest: '#d9e6da'
+  on-surface: '#131e17'
+  on-surface-variant: '#41493e'
+  inverse-surface: '#28332b'
+  inverse-on-surface: '#e7f4e8'
+  outline: '#717a6d'
+  outline-variant: '#c0c9bb'
+  surface-tint: '#2a6b2c'
+  primary: '#00450d'
+  on-primary: '#ffffff'
+  primary-container: '#1b5e20'
+  on-primary-container: '#90d689'
+  inverse-primary: '#91d78a'
+  secondary: '#1b6d24'
+  on-secondary: '#ffffff'
+  secondary-container: '#a0f399'
+  on-secondary-container: '#217128'
+  tertiary: '#00433b'
+  on-tertiary: '#ffffff'
+  tertiary-container: '#005c52'
+  on-tertiary-container: '#6ed6c6'
+  error: '#ba1a1a'
+  on-error: '#ffffff'
+  error-container: '#ffdad6'
+  on-error-container: '#93000a'
+  primary-fixed: '#acf4a4'
+  primary-fixed-dim: '#91d78a'
+  on-primary-fixed: '#002203'
+  on-primary-fixed-variant: '#0c5216'
+  secondary-fixed: '#a3f69c'
+  secondary-fixed-dim: '#88d982'
+  on-secondary-fixed: '#002204'
+  on-secondary-fixed-variant: '#005312'
+  tertiary-fixed: '#8df5e4'
+  tertiary-fixed-dim: '#70d8c8'
+  on-tertiary-fixed: '#00201c'
+  on-tertiary-fixed-variant: '#005048'
+  background: '#f0fdf1'
+  on-background: '#131e17'
+  surface-variant: '#d9e6da'
 typography:
-  display-lg:
-    fontFamily: Sora
-    fontSize: 48px
-    fontWeight: '700'
-    lineHeight: 56px
+  display-hero:
+    fontFamily: Lexend
+    fontSize: 56px
+    fontWeight: '800'
+    lineHeight: 64px
+    letterSpacing: -0.03em
+  display-hero-mobile:
+    fontFamily: Lexend
+    fontSize: 36px
+    fontWeight: '800'
+    lineHeight: 44px
     letterSpacing: -0.02em
   headline-lg:
-    fontFamily: Sora
+    fontFamily: Lexend
     fontSize: 32px
-    fontWeight: '600'
+    fontWeight: '700'
     lineHeight: 40px
-    letterSpacing: -0.01em
+    letterSpacing: -0.02em
   headline-lg-mobile:
-    fontFamily: Sora
-    fontSize: 28px
-    fontWeight: '600'
-    lineHeight: 36px
+    fontFamily: Lexend
+    fontSize: 26px
+    fontWeight: '700'
+    lineHeight: 34px
+    letterSpacing: -0.01em
   headline-md:
-    fontFamily: Sora
+    fontFamily: Lexend
     fontSize: 24px
     fontWeight: '600'
     lineHeight: 32px
+    letterSpacing: -0.01em
   title-lg:
-    fontFamily: Sora
+    fontFamily: Lexend
     fontSize: 20px
-    fontWeight: '500'
+    fontWeight: '600'
     lineHeight: 28px
+  title-md:
+    fontFamily: Lexend
+    fontSize: 16px
+    fontWeight: '600'
+    lineHeight: 24px
+  metric-huge:
+    fontFamily: Lexend
+    fontSize: 44px
+    fontWeight: '800'
+    lineHeight: 48px
+    letterSpacing: -0.03em
+  metric-huge-mobile:
+    fontFamily: Lexend
+    fontSize: 32px
+    fontWeight: '800'
+    lineHeight: 38px
+    letterSpacing: -0.02em
   body-lg:
-    fontFamily: Sora
-    fontSize: 18px
-    fontWeight: '400'
-    lineHeight: 28px
-  body-md:
-    fontFamily: Sora
+    fontFamily: Lexend
     fontSize: 16px
     fontWeight: '400'
     lineHeight: 24px
-  body-sm:
-    fontFamily: Sora
+  body-md:
+    fontFamily: Lexend
     fontSize: 14px
     fontWeight: '400'
     lineHeight: 20px
   label-lg:
-    fontFamily: Sora
-    fontSize: 14px
-    fontWeight: '600'
-    lineHeight: 20px
-    letterSpacing: 0.05em
+    fontFamily: Lexend
+    fontSize: 13px
+    fontWeight: '700'
+    lineHeight: 18px
+    letterSpacing: 0.06em
   label-md:
-    fontFamily: Sora
+    fontFamily: Lexend
     fontSize: 12px
     fontWeight: '600'
     lineHeight: 16px
-    letterSpacing: 0.05em
+    letterSpacing: 0.04em
+  label-sm:
+    fontFamily: Lexend
+    fontSize: 11px
+    fontWeight: '600'
+    lineHeight: 14px
+    letterSpacing: 0.04em
 rounded:
   sm: 0.25rem
   DEFAULT: 0.5rem
@@ -111,69 +137,93 @@ rounded:
   xl: 1.5rem
   full: 9999px
 spacing:
-  base: 8px
-  xs: 4px
-  sm: 12px
-  md: 24px
-  lg: 40px
-  xl: 64px
-  gutter: 24px
-  margin-mobile: 16px
-  margin-desktop: 48px
+  gutter: 1rem
+  gutter-tablet: 1.5rem
+  gutter-desktop: 2rem
+  margin: 1rem
+  margin-tablet: 2rem
+  margin-desktop: 3rem
+  space-2xs: 0.25rem
+  space-xs: 0.375rem
+  space-sm: 0.75rem
+  space-md: 1rem
+  space-lg: 1.5rem
+  space-xl: 2rem
+  space-2xl: 3rem
 ---
 
 ## Brand & Style
-The design system is built upon a philosophy of "Vibrant Athleticism," merging the disciplined structure of high-performance sports technology with the organic vitality of the natural world. It is designed for users who seek peak efficiency, clarity, and a sense of fresh air in their digital experiences. 
 
-The aesthetic style is **Corporate Modern with subtle Glassmorphic accents**. This combination ensures a professional, reliable foundation while introducing layers of light and transparency that evoke an "aerated" and modern feel. Visuals should feel precise, energetic, and clean, emphasizing movement through generous whitespace and purposeful transitions.
+This design system delivers a high-impact, athletic promotional showcase tailored for app store feature graphics, launch banners, and product storytelling. Targeted at trail runners, navigational athletes, and outdoor adventurers, it merges tactical trail precision with modern Material 3 restraint.
+
+The aesthetic fuses **Modern Athletic Minimalism** with crisp outdoor technical cues:
+- Architectural white and iced-sage surfaces grounded by deep coniferous greens.
+- High-contrast performance telemetry typography inspired by GPS chronometers and contour waypoints.
+- Polished device frames, frosted acrylic callout chips, and tactical terrain elevations that highlight the dynamic route-generation capability of the product.
 
 ## Colors
-This design system utilizes a palette centered around an athletic **Forest Green**, remapped to provide high visibility against deep, cool neutrals. 
 
-- **Primary (#059669):** A high-chroma Forest Green used for primary actions, branding, and active states.
-- **Secondary (#34D399):** A lighter Mint Green used for accents, highlights, and status indicators that require visibility without the weight of the primary color.
-- **Tertiary (#10B981):** An Emerald shade used for semantic "success" states and supplementary data visualization.
-- **Neutral (#0F172A):** A deep Slate used for backgrounds to create a "Midnight Forest" canvas, allowing the green accents to vibrate with energy.
-
-Surface colors follow a tonal nesting logic: the base background is the darkest neutral, while cards and overlays use slightly lighter variations of Slate to create depth.
+The palette establishes an authentic alpine and backcountry training mood:
+- **Primary (`#1B5E20`) & Secondary (`#2E7D32`):** Dense forest greens deployed for high-intent actions, primary metric badges, active tracking states, and brand anchors.
+- **Accent & Highlight Surfaces (`#E8F5E9`, `#C8E6C9`):** Fresh mint and eucalyptus tones that give cards, active toggles, and feature badges an energetic lift against bright backdrops.
+- **Tertiary (`#00897B`):** Deep alpine teal for telemetry vectors, bearing lines, and ancillary map overlays.
+- **Canvas & Neutral Surfaces:** Clean alpine mist canvas (`#F4F8F5`), architectural porcelain (`#FFFFFF`), and soft cool-slate containers (`#EBF2EE`).
+- **Dark Neutral (`#0F1A13`):** Deep pine charcoal replacing harsh black to maximize legibility without starkness under direct outdoor sunlight.
 
 ## Typography
-**Sora** is the exclusive typeface for the design system. Its geometric structure and wide aperture provide excellent legibility and a high-tech, athletic appearance.
 
-- **Headlines:** Use Bold (700) or Semi-Bold (600) weights with slightly tightened letter-spacing to create an impactful, editorial feel.
-- **Body Text:** Standardized on Regular (400) weight for maximum readability. Use Body-MD for general interface text and Body-LG for long-form content.
-- **Labels:** Always set in Semi-Bold (600) or Bold (700) with increased letter-spacing and uppercase styling where appropriate to denote hierarchy in small UI elements.
+The design system employs **Lexend** across all roles to project an athletic, modern, and highly legible character. Built specifically around typographic fluency and eye-tracking speed, Lexend mimics the instant readability of GPS sports watches and trail navigation devices:
+
+- **Hero & Headliners:** High-weight headers (`700` and `800`) deliver bold, marketing-grade statements with tight letter tracking for app store banners.
+- **Telemetry & Metrics (`metric-huge`):** Large tabular-like numerical readouts for distances, paces, and waypoint coordinates.
+- **Labels & Overlines:** Upper-cased and tracked out (`0.04em` to `0.06em`) for categorical sports data (`TARGET DISTANCE`, `TIME`, `CHECKPOINTS`).
 
 ## Layout & Spacing
-The layout follows a **fluid 12-column grid** on desktop and a **4-column grid** on mobile. The spacing rhythm is based on a factor of 8px, ensuring mathematical harmony across all components.
 
-- **Desktop:** 12 columns, 24px gutters, 48px side margins. 
-- **Tablet:** 8 columns, 20px gutters, 32px side margins.
-- **Mobile:** 4 columns, 16px gutters, 16px side margins.
+A structured 8pt baseline rhythm governs both the in-app experience and high-resolution store showcase frames:
 
-Content should lean toward a "center-focused" alignment for readability, with high-performance dashboards utilizing the full width of the grid. Components should use the `md` (24px) spacing unit for internal padding to maintain a sense of openness and breathability.
+- **Showcase & App Store Slides:** Follow a fluid 12-column layout on desktop previews, narrowing to a centered, high-density vertical stack for mobile screenshot generators.
+- **Card Padding & Metrics Grids:** Consistent `space-lg` (24px) or `space-md` (16px) internal paddings maintain comfortable breathing room around high-density data chips and map preview sheets.
+- **Breakpoints:**
+  - `Compact (Mobile)`: 0–599px (single column, fixed sticky actions, 16px lateral margin).
+  - `Medium (Tablet / Store Tile)`: 600–1023px (2-column showcase with split-panel device mockups and feature lists).
+  - `Expanded (Desktop / Web Feature)`: 1024px+ (multi-device perspective grids, 48px outer margins).
 
 ## Elevation & Depth
-Depth in the design system is communicated through **Tonal Layering** and **Ambient Shadows** with a subtle forest-green tint.
 
-1.  **Base:** The primary background layer (Neutral #0F172A).
-2.  **Surface:** Elevated containers (Cards, Modals) use a slightly lighter slate (#1E293B) to stand out.
-3.  **Glass:** Floating elements (Navigation bars, Dropdowns) utilize a backdrop-blur effect (20px) with a 10% opacity white overlay to create a frosted glass look.
-4.  **Shadows:** Use extra-diffused shadows for high-elevation components. Shadows should have a hex value of #000000 at 30% opacity, but with a slight green-tinted glow (#059669 at 5% opacity) on primary action buttons to make them appear "energized."
+Visual hierarchy leverages crisp Material 3 surface tiers paired with high-performance outdoor translucency:
+
+- **Level 0 (Backdrop Canvas):** `#F4F8F5` flat surface.
+- **Level 1 (Subtle Containers & Group Cards):** Pure `#FFFFFF` or pale mint-frosted containers (`rgba(235, 242, 238, 0.85)`) with a light forest tint border: `1px solid rgba(46, 125, 50, 0.08)`.
+- **Level 2 (Floating Action Trays & Map Controls):** `0 8px 24px -4px rgba(15, 26, 19, 0.08)`, giving compass and GPS fab triggers an effortless floating feel over topographic vectors.
+- **Level 3 (Modal Bottom Sheets & Device Bezels):** `0 20px 40px -8px rgba(15, 26, 19, 0.16)` with subtle specular white top borders (`border-top: 1px solid rgba(255, 255, 255, 0.8)`).
+- **Frosted Glass Pill Overlays:** `backdrop-filter: blur(16px)` with `rgba(255, 255, 255, 0.78)` background for in-map metric HUDs, keeping satellite and terrain data visible underneath.
 
 ## Shapes
-The design system employs a **Rounded** shape language (Level 2). This softens the technical precision of the Sora typeface and the dark UI, making the interface feel more approachable and organic.
 
-- **Standard Elements (Buttons, Inputs):** 0.5rem (8px) corner radius.
-- **Large Containers (Cards, Sections):** 1rem (16px) corner radius.
-- **Feature Elements (Modals, Hero Cards):** 1.5rem (24px) corner radius.
+The design system establishes a controlled **Rounded** language (Level 2) that feels ergonomic and soft to the thumb, reflecting current Android Material You standards:
 
-Iconography should follow this rounded logic, avoiding sharp points in favor of slightly curved terminals.
+- **Corner Radii Tokens:**
+  - Base buttons, cards, and input modules: `0.75rem` to `1rem` (12px–16px).
+  - High-emphasis action buttons & pill badges: `9999px` (full pill).
+  - Device mockups & primary bottom sheets: `1.5rem` to `2rem` (24px–32px).
+- **Icon Enclosures:** Smooth continuous rounded rectangles (`rounded-2xl`) framing athletic running glyphs and waypoint iconography.
 
 ## Components
-- **Buttons:** Primary buttons use the Forest Green (#059669) background with white Sora Bold text. Secondary buttons are "Ghost" style with a 1px border of #34D399 and a subtle green hover tint.
-- **Chips:** Small, rounded containers with a #1E293B background and #34D399 text, used for tags or filtering.
-- **Input Fields:** Dark backgrounds (#1E293B) with a subtle 1px border (#334155). On focus, the border transitions to Forest Green with a soft outer glow.
-- **Cards:** Utilize the "Surface" color with a 1px low-contrast outline. Interactive cards should slightly lift (elevate) and increase shadow density on hover.
-- **Lists:** Clean, horizontal dividers with 8px of padding between items. Use the Primary Green for icons within lists to guide the eye.
-- **Checkboxes/Radios:** When active, these are filled with Forest Green and use a white checkmark/dot for maximum contrast and high-performance visibility.
+
+### Buttons & Interactive Controls
+- **Primary High-Emphasis CTA:** Solid Forest Green (`#1B5E20`), bold white text, subtle compass/runner icon on the left, pill or 16px radius, height: `56px`. Pressed state deepens to `#144618`.
+- **Secondary / Metric Buttons:** Soft Sage (`#E8F5E9`), deep green label (`#1B5E20`), height: `44px`, 12px corner radius.
+- **Distance Selector Segmented Chips:** White container or muted sage outline when unselected; bold forest green fill with white checkmark when active.
+
+### Metrics & HUD Callout Cards
+- **Telemetric Split Cards:** Dual-pane comparison cards (e.g., *Air Distance* vs *Path Distance*) featuring massive bold numbers (`metric-huge`), micro-overlines (`label-sm`), and a vibrant contrast panel (e.g. solid `#1B5E20` card paired with a white companion card).
+- **Floating HUD Pills:** Translucent white or frosted light sage (`rgba(255, 255, 255, 0.88)`), carrying dynamic run time, checkpoints count, and live pacing.
+
+### Checkpoints & Waypoint List
+- **List Items:** Horizontal card items with soft background fills (`#F0F5F2`), prominent teal/green numbering badges (`1.`, `2.`, `3.`), and smooth dragging / completion indicators.
+- **Waypoint Map Markers:** Forest green concentric circular pinheads (`#1B5E20`) housing crisp white numbers with high-contrast dropshadows for terrain readability.
+
+### Device Showcase Frame (Marketing & Play Store Asset)
+- Premium curved Android chassis with realistic screen reflections, floating over multi-gradient sage backgrounds.
+- Feature annotation cards float offset around the device with tether lines pointing to real UI elements like route generation and live compass controls.

@@ -9,6 +9,7 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -40,8 +41,12 @@ object NetworkModule {
     @Singleton
     fun provideOkHttpClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .callTimeout(20, TimeUnit.SECONDS)
+            .addInterceptor(appUserAgentInterceptor())
+            // One retry only — generation has a hard 55s attempt budget.
+            .addInterceptor(RetryInterceptor(maxRetries = 1))
         if (BuildConfig.DEBUG) {
             builder.addInterceptor(
                 HttpLoggingInterceptor().apply {
@@ -81,4 +86,16 @@ object NetworkModule {
     @Singleton
     fun provideOverpassApiService(@Named("overpass") retrofit: Retrofit): OverpassApiService =
         retrofit.create(OverpassApiService::class.java)
+
+    /** Public OSRM/Overpass policies expect an identifiable client, not a blank default agent. */
+    private fun appUserAgentInterceptor(): Interceptor = Interceptor { chain ->
+        val request = chain.request().newBuilder()
+            .header(
+                "User-Agent",
+                "OrienteerRun/${BuildConfig.VERSION_NAME} (Android; com.orienteer.app; routing)"
+            )
+            .header("Accept", "application/json")
+            .build()
+        chain.proceed(request)
+    }
 }

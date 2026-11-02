@@ -24,7 +24,8 @@ data class RunDetail(
     val summary: RunSummary,
     val trackedPoints: List<GeoPoint>,
     val trackedPointTimestampsMs: List<Long>,
-    val checkpointReachedAtMs: Map<Int, Long>
+    val checkpointReachedAtMs: Map<Int, Long>,
+    val skippedCheckpointIds: Set<Int> = emptySet()
 )
 
 @Singleton
@@ -32,8 +33,11 @@ class RunRepository @Inject constructor(
     private val runSessionDao: RunSessionDao,
     private val gson: Gson
 ) {
-    fun observeRecentRuns(): Flow<List<RunSummary>> =
-        runSessionDao.observeRecentSessions().map { list -> list.map { it.toSummary() } }
+    fun observeAllRuns(): Flow<List<RunSummary>> =
+        runSessionDao.observeAllSessions().map { list -> list.map { it.toSummary() } }
+
+    /** @deprecated Prefer [observeAllRuns]. */
+    fun observeRecentRuns(): Flow<List<RunSummary>> = observeAllRuns()
 
     suspend fun saveSession(
         routeId: String,
@@ -44,7 +48,8 @@ class RunRepository @Inject constructor(
         checkpointsReached: Int,
         trackedPoints: List<GeoPoint>,
         trackedPointTimestampsMs: List<Long>,
-        checkpointReachedAtMs: Map<Int, Long>
+        checkpointReachedAtMs: Map<Int, Long>,
+        skippedCheckpointIds: Set<Int> = emptySet()
     ): Long = runSessionDao.insertSession(
         RunSessionEntity(
             routeId = routeId,
@@ -55,7 +60,8 @@ class RunRepository @Inject constructor(
             checkpointsReached = checkpointsReached,
             trackedPointsJson = gson.toJson(trackedPoints),
             trackedPointTimestampsJson = gson.toJson(trackedPointTimestampsMs),
-            checkpointReachedAtJson = gson.toJson(checkpointReachedAtMs)
+            checkpointReachedAtJson = gson.toJson(checkpointReachedAtMs),
+            skippedCheckpointIdsJson = gson.toJson(skippedCheckpointIds.toList())
         )
     )
 
@@ -64,6 +70,45 @@ class RunRepository @Inject constructor(
 
     suspend fun getRunDetail(sessionId: Long): RunDetail? =
         runSessionDao.getSessionById(sessionId)?.toDetail(gson)
+
+    /**
+     * Updates GPS point timestamps only. Track coordinates ([RunSessionEntity.trackedPointsJson])
+     * are left unchanged.
+     */
+    suspend fun updateTrackedPointTimestamps(sessionId: Long, timestampsMs: List<Long>) {
+        val existing = runSessionDao.getSessionById(sessionId) ?: return
+        val elapsed = if (timestampsMs.size >= 2) {
+            timestampsMs.last() - timestampsMs.first()
+        } else {
+            existing.elapsedTimeMs
+        }.coerceAtLeast(0L)
+        runSessionDao.updateSession(
+            existing.copy(
+                trackedPointTimestampsJson = gson.toJson(timestampsMs),
+                elapsedTimeMs = elapsed,
+                finishedAt = if (timestampsMs.isNotEmpty()) timestampsMs.last() else existing.finishedAt
+            )
+        )
+    }
+
+    /**
+     * Updates checkpoint arrival times (leg timing). GPS track coordinates/timestamps unchanged.
+     */
+    suspend fun updateCheckpointReachedAt(
+        sessionId: Long,
+        checkpointReachedAtMs: Map<Int, Long>,
+        elapsedTimeMs: Long,
+        finishedAt: Long?
+    ) {
+        val existing = runSessionDao.getSessionById(sessionId) ?: return
+        runSessionDao.updateSession(
+            existing.copy(
+                checkpointReachedAtJson = gson.toJson(checkpointReachedAtMs),
+                elapsedTimeMs = elapsedTimeMs.coerceAtLeast(0L),
+                finishedAt = finishedAt
+            )
+        )
+    }
 
     suspend fun deleteRun(sessionId: Long) {
         runSessionDao.deleteSessionById(sessionId)
@@ -81,13 +126,28 @@ private fun RunSessionEntity.toSummary() = RunSummary(
 )
 
 private fun RunSessionEntity.toDetail(gson: Gson): RunDetail {
-    val pointsType = object : TypeToken<List<GeoPoint>>() {}.type
-    val timesType = object : TypeToken<List<Long>>() {}.type
-    val checkpointsType = object : TypeToken<Map<Int, Long>>() {}.type
+    // Avoid anonymous TypeToken {} — R8 strips its generic signature in release.
+    val trackedPoints = gson.fromJson(trackedPointsJson, Array<GeoPoint>::class.java)
+        ?.toList()
+        ?: emptyList()
+    val trackedPointTimestampsMs = gson.fromJson(trackedPointTimestampsJson, Array<Long>::class.java)
+        ?.toList()
+        ?: emptyList()
+    val checkpointMapType = TypeToken.getParameterized(
+        MutableMap::class.java,
+        Integer::class.java,
+        java.lang.Long::class.java
+    ).type
+    val checkpointReachedAtMs: Map<Int, Long> =
+        gson.fromJson(checkpointReachedAtJson, checkpointMapType) ?: emptyMap()
+    val skippedCheckpointIds = gson.fromJson(skippedCheckpointIdsJson, IntArray::class.java)
+        ?.toSet()
+        ?: emptySet()
     return RunDetail(
         summary = toSummary(),
-        trackedPoints = gson.fromJson(trackedPointsJson, pointsType) ?: emptyList(),
-        trackedPointTimestampsMs = gson.fromJson(trackedPointTimestampsJson, timesType) ?: emptyList(),
-        checkpointReachedAtMs = gson.fromJson(checkpointReachedAtJson, checkpointsType) ?: emptyMap()
+        trackedPoints = trackedPoints,
+        trackedPointTimestampsMs = trackedPointTimestampsMs,
+        checkpointReachedAtMs = checkpointReachedAtMs,
+        skippedCheckpointIds = skippedCheckpointIds
     )
 }

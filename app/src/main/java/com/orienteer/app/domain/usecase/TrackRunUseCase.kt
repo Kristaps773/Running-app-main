@@ -30,7 +30,7 @@ class TrackRunUseCase @Inject constructor(
      * @param session       Current run state.
      * @param route         The route being run (for checkpoint verification).
      * @param newPoint      The latest GPS coordinate.
-     * @param elapsedTimeMs Wall-clock elapsed time since run start.
+     * @param elapsedTimeMs Moving elapsed time since run start (excludes pauses).
      */
     operator fun invoke(
         session: RunSession,
@@ -39,7 +39,7 @@ class TrackRunUseCase @Inject constructor(
         elapsedTimeMs: Long,
         timestampMs: Long
     ): RunSession {
-        if (!session.isActive) return session
+        if (!session.isActive || session.isPaused) return session
 
         // Accumulate distance from the last tracked point
         val addedDistance = if (session.trackedPoints.isNotEmpty()) {

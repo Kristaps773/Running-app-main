@@ -1,0 +1,22 @@
+OrienteerRun Play Store icon — source
+=====================================
+
+Replaced green placeholder letter “O” (previously generated only for store-assets).
+
+Canonical launcher definition (shipping app):
+  app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+  app/src/main/res/mipmap-hdpi/ic_launcher.xml
+  → background: @color/ic_launcher_background (#2E7D32)
+  → foreground: @drawable/ic_run_notification (Material directions-run silhouette)
+
+Exported 512×512 raster:
+  store-assets/icon-512.png
+  Desktop\PlayStore-OrienteerRun-Assets\01-app-icon-512.png
+
+Rasterization notes:
+  White directions_run glyph on #2E7D32 full-bleed square, matching the adaptive
+  launcher. Glyph bitmap sourced from Material Design Icons (directions_run),
+  same family as ic_run_notification.xml.
+
+No separate designed PNG/mipmap assets existed in git history or on disk;
+the adaptive XML + notification drawable is the real app icon.

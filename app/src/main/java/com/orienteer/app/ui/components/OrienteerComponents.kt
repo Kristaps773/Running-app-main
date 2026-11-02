@@ -20,7 +20,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -28,11 +27,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.orienteer.app.ui.theme.BrandForest
 import com.orienteer.app.ui.theme.OrienteerBottomSheetShape
 import com.orienteer.app.ui.theme.OrienteerCardShape
 
@@ -50,14 +49,16 @@ fun OrienteerTopBar(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.onSurface
             )
         },
         navigationIcon = navigationIcon,
         actions = actions,
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surface,
-            titleContentColor = MaterialTheme.colorScheme.primary
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+            actionIconContentColor = MaterialTheme.colorScheme.onSurface
         )
     )
 }
@@ -78,7 +79,7 @@ fun OrienteerIconButton(
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = MaterialTheme.colorScheme.primary
+            tint = MaterialTheme.colorScheme.onSurface
         )
     }
 }
@@ -126,13 +127,16 @@ fun OrienteerPrimaryButton(
         onClick = onClick,
         modifier = modifier
             .fillMaxWidth()
-            .height(52.dp),
+            .height(56.dp),
         shape = OrienteerCardShape,
         colors = ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.primary,
-            contentColor = MaterialTheme.colorScheme.onPrimary
+            containerColor = BrandForest,
+            contentColor = Color.White
         ),
-        elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+        elevation = ButtonDefaults.buttonElevation(
+            defaultElevation = 2.dp,
+            pressedElevation = 0.dp
+        )
     ) {
         if (icon != null) {
             Icon(icon, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
@@ -147,18 +151,20 @@ fun OrienteerGhostButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    OutlinedButton(
+    // DESIGN.md secondary / metric: soft sage fill, forest label, 44dp.
+    Button(
         onClick = onClick,
         modifier = modifier
             .fillMaxWidth()
-            .height(48.dp),
+            .height(44.dp),
         shape = OrienteerCardShape,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary),
-        colors = ButtonDefaults.outlinedButtonColors(
-            contentColor = MaterialTheme.colorScheme.secondary
-        )
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.primary
+        ),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
     ) {
-        Text(text, style = MaterialTheme.typography.labelLarge)
+        Text(text, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -198,20 +204,14 @@ fun OrienteerMetricGradientCard(
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = OrienteerCardShape,
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest
+        ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surfaceContainer,
-                            MaterialTheme.colorScheme.surface
-                        )
-                    )
-                )
                 .padding(20.dp)
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {

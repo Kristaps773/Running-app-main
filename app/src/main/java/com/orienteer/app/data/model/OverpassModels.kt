@@ -1,11 +1,15 @@
 package com.orienteer.app.data.model
 
+import androidx.annotation.Keep
 import com.google.gson.annotations.SerializedName
 
+@Keep
 data class OverpassResponse(
-    @SerializedName("elements") val elements: List<OverpassElement>
+    // Array (not List) so R8+Gson keeps element typing in release builds.
+    @SerializedName("elements") val elements: Array<OverpassElement> = emptyArray()
 )
 
+@Keep
 data class OverpassElement(
     @SerializedName("type") val type: String,
     @SerializedName("id") val id: Long,
@@ -39,6 +43,7 @@ data class OverpassElement(
     }
 }
 
+@Keep
 data class OverpassCenter(
     @SerializedName("lat") val lat: Double,
     @SerializedName("lon") val lon: Double

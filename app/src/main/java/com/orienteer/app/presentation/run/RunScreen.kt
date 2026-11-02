@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -14,11 +15,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Map
-import androidx.compose.material.icons.filled.Stop
+import com.orienteer.app.ui.icons.OrienteerIcons
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -33,16 +31,27 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import com.orienteer.app.R
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.orienteer.app.data.local.MapDisplayPreferences
+import com.orienteer.app.data.local.BasemapStyle
 import com.orienteer.app.presentation.components.GhostTextButton
 import com.orienteer.app.presentation.components.OrienteerTopBar
 import com.orienteer.app.presentation.components.PrimaryGreenButton
 import com.orienteer.app.presentation.components.RouteBottomSheet
+import com.orienteer.app.presentation.components.RoutePlottingLoader
+import com.orienteer.app.presentation.map.MapAttributionBar
 import com.orienteer.app.presentation.map.OsmMapHost
+import com.orienteer.app.ui.components.OrienteerGhostButton
+import com.orienteer.app.util.RoutePdfExporter
+import com.orienteer.app.ui.theme.OrienteerCardShape
+import com.orienteer.app.ui.theme.OrienteerRadius
+import com.orienteer.app.ui.theme.OrienteerSpacing
 import com.orienteer.app.util.GeoUtils
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -56,7 +65,9 @@ fun RunScreen(
     viewModel: RunViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val mapDisplay by viewModel.mapDisplayPreferences.collectAsStateWithLifecycle()
     var showStopConfirm by remember { mutableStateOf(false) }
+    var runPanelExpanded by remember { mutableStateOf(true) }
 
     LaunchedEffect(uiState.isFinished) {
         if (uiState.isFinished) onRunComplete()
@@ -99,52 +110,87 @@ fun RunScreen(
     val session = uiState.session
     val route = uiState.route
     var tickMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(uiState.isRunning, session?.startedAt) {
-        if (!uiState.isRunning || session?.startedAt == null) return@LaunchedEffect
+    LaunchedEffect(uiState.isRunning, uiState.isPaused, session?.startedAt, session?.totalPausedMs) {
+        if (!uiState.isRunning || uiState.isPaused || session?.startedAt == null) return@LaunchedEffect
         while (isActive) {
             tickMs = System.currentTimeMillis()
             delay(1_000)
         }
     }
-    val elapsedMs = if (uiState.isRunning && session != null) {
-        (tickMs - session.startedAt).coerceAtLeast(0L)
-    } else {
-        session?.elapsedTimeMs ?: 0L
+    val elapsedMs = when {
+        session == null -> 0L
+        uiState.isRunning && !uiState.isPaused -> session.activeElapsedMs(tickMs)
+        else -> session.elapsedTimeMs
     }
     val distanceM = session?.totalDistanceM ?: 0.0
     val paceLabel = GeoUtils.formatRunPace(distanceM, elapsedMs)
     val currentLocation = session?.trackedPoints?.lastOrNull()
     val nextCp = route?.checkpoints?.getOrNull(session?.currentCheckpointIdx ?: 0)
-    val mapPrefs = MapDisplayPreferences(
+    // Keep air legs on during a run; honor Settings toggle for the OSRM foot path.
+    val mapPrefs = mapDisplay.copy(
         showAirLegLines = true,
-        showAirLegDistanceLabels = true,
-        showWalkingPathPolyline = true,
-        useDarkBasemap = false
+        showAirLegDistanceLabels = true
     )
+    val context = LocalContext.current
+    val exportGpxLabel = stringResource(R.string.export_run_gpx)
 
+    val nextCpTitle = nextCp?.let { cp ->
+        when {
+            cp.isStart &&
+                (session?.currentCheckpointIdx ?: 0) >= (route?.checkpoints?.lastIndex ?: 0) ->
+                "Finish"
+            cp.isStart -> "Start"
+            else -> "Checkpoint ${cp.id}"
+        }
+    }
+
+    // Full-bleed map with Compose overlays (MapScreen pattern) so OSMDroid cannot paint over HUD.
     Box(modifier = Modifier.fillMaxSize()) {
         if (route != null) {
             OsmMapHost(
                 route = route,
-                currentLocation = currentLocation,
+                currentLocation = currentLocation.takeIf { mapDisplay.showYouAreHereDuringRun },
                 mapPrefs = mapPrefs,
+                basemapStyle = mapDisplay.basemapStyle,
                 interactive = true,
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            RoutePlottingLoader(
+                modifier = Modifier.align(Alignment.Center),
+                label = "Loading course…"
+            )
         }
+
+        MapAttributionBar(
+            basemapStyle = mapDisplay.basemapStyle,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(
+                    start = OrienteerSpacing.sm,
+                    bottom = if (runPanelExpanded) 220.dp else 72.dp,
+                    end = OrienteerSpacing.sm
+                )
+                .zIndex(1f)
+        )
 
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .statusBarsPadding()
+                .zIndex(2f)
         ) {
             OrienteerTopBar(
-                title = "Active Run",
+                title = if (uiState.isPaused) {
+                    stringResource(R.string.run_paused)
+                } else {
+                    stringResource(R.string.active_run)
+                },
                 showBack = true,
-                onBack = onNavigateBack
+                onBack = onNavigateBack,
+                trailingIcon = OrienteerIcons.Layers,
+                onTrailingClick = { viewModel.cycleBasemapStyle() }
             )
             CompactRunMetricsBar(
                 distance = GeoUtils.formatDistance(distanceM),
@@ -152,29 +198,48 @@ fun RunScreen(
                 pace = paceLabel,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                    .padding(
+                        horizontal = OrienteerSpacing.sm,
+                        vertical = OrienteerSpacing.xs
+                    )
             )
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.End)
+                    .padding(end = OrienteerSpacing.md, bottom = OrienteerSpacing.xs),
+                shape = MaterialTheme.shapes.extraLarge,
+                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.9f)
+            ) {
+                Text(
+                    mapStyleShortLabel(mapDisplay.basemapStyle),
+                    modifier = Modifier.padding(
+                        horizontal = OrienteerSpacing.sm,
+                        vertical = OrienteerSpacing.xs
+                    ),
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
         }
 
-        RouteBottomSheet(modifier = Modifier.align(Alignment.BottomCenter)) {
+        RouteBottomSheet(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(2f),
+            expanded = runPanelExpanded,
+            onExpandedChange = { runPanelExpanded = it }
+        ) {
             Column(
                 modifier = Modifier
                     .heightIn(max = 320.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(OrienteerSpacing.xs)
             ) {
                 if (nextCp != null) {
                     Text(
-                        text = when {
-                            nextCp.isStart &&
-                                (session?.currentCheckpointIdx ?: 0) >= (route?.checkpoints?.lastIndex ?: 0) ->
-                                "Finish"
-                            nextCp.isStart -> "Start"
-                            else -> "Checkpoint ${nextCp.id}"
-                        },
+                        text = nextCpTitle.orEmpty(),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         text = nextCp.description,
@@ -194,7 +259,7 @@ fun RunScreen(
                         val isNext = index == (session?.currentCheckpointIdx ?: -1)
                         val isDone = index < (session?.currentCheckpointIdx ?: 0)
                         Surface(
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(OrienteerRadius.md),
                             color = when {
                                 isNext -> MaterialTheme.colorScheme.primaryContainer
                                 isDone -> MaterialTheme.colorScheme.surfaceContainerHighest
@@ -203,7 +268,7 @@ fun RunScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
-                                modifier = Modifier.padding(12.dp),
+                                modifier = Modifier.padding(OrienteerSpacing.sm),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
@@ -250,21 +315,52 @@ fun RunScreen(
 
                 if (!uiState.isRunning) {
                     PrimaryGreenButton(
-                        text = "Start Run",
+                        text = stringResource(R.string.start_run),
                         onClick = { viewModel.startRun() },
-                        leadingIcon = Icons.Default.Map
+                        leadingIcon = OrienteerIcons.Map
                     )
                 } else {
-                    PrimaryGreenButton(
-                        text = "Stop Run",
-                        onClick = { showStopConfirm = true },
-                        leadingIcon = Icons.Default.Stop
+                    if (uiState.isPaused) {
+                        PrimaryGreenButton(
+                            text = stringResource(R.string.resume_run),
+                            onClick = { viewModel.resumeRun() },
+                            leadingIcon = OrienteerIcons.PlayArrow
+                        )
+                    } else {
+                        PrimaryGreenButton(
+                            text = stringResource(R.string.pause_run),
+                            onClick = { viewModel.pauseRun() },
+                            leadingIcon = OrienteerIcons.Pause
+                        )
+                    }
+                    OrienteerGhostButton(
+                        text = stringResource(R.string.stop_run),
+                        onClick = { showStopConfirm = true }
                     )
-                    GhostTextButton(
-                        text = "Can't reach it? Mark as unreachable",
-                        onClick = { viewModel.markCurrentCheckpointUnreachable() },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    if (session != null && session.trackedPoints.isNotEmpty()) {
+                        OrienteerGhostButton(
+                            text = exportGpxLabel,
+                            onClick = {
+                                RoutePdfExporter.shareRunAsGpx(
+                                    context = context,
+                                    route = route,
+                                    trackedPoints = session.trackedPoints,
+                                    trackedPointTimestampsMs = session.trackedPointTimestampsMs,
+                                    startedAt = session.startedAt,
+                                    sessionLabel = "run_active_${(route?.id ?: "active").take(8)}"
+                                )
+                            }
+                        )
+                    }
+                    val targetingFinish = nextCp?.isStart == true &&
+                        (session?.currentCheckpointIdx ?: 0) >= (route?.checkpoints?.lastIndex ?: 0)
+                    if (!uiState.isPaused && !targetingFinish) {
+                        GhostTextButton(
+                            text = stringResource(R.string.mark_unreachable),
+                            onClick = { viewModel.markCurrentCheckpointUnreachable() },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
         }
@@ -280,14 +376,15 @@ private fun CompactRunMetricsBar(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-        tonalElevation = 4.dp
+        shape = OrienteerCardShape,
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 4.dp,
+        shadowElevation = 2.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = OrienteerSpacing.sm, vertical = OrienteerSpacing.xs + OrienteerSpacing.xxs),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -313,4 +410,14 @@ private fun CompactMetric(label: String, value: String) {
             color = MaterialTheme.colorScheme.primary
         )
     }
+}
+
+@Composable
+private fun mapStyleShortLabel(style: BasemapStyle): String = when (style) {
+    BasemapStyle.STANDARD -> stringResource(R.string.map_style_standard)
+    BasemapStyle.DARK -> stringResource(R.string.map_style_dark)
+    BasemapStyle.PSEUDO_O -> stringResource(R.string.map_style_pseudo_o)
+    BasemapStyle.STREET_O -> stringResource(R.string.map_style_street_o)
+    BasemapStyle.OPEN_TOPO -> stringResource(R.string.map_style_open_topo)
+    BasemapStyle.CYCLOSM -> stringResource(R.string.map_style_cyclosm)
 }

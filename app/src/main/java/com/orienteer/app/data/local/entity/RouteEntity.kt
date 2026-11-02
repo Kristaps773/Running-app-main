@@ -5,7 +5,6 @@ import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
 import com.orienteer.app.data.model.Checkpoint
 import com.orienteer.app.data.model.GeoPoint
 
@@ -33,7 +32,8 @@ data class RunSessionEntity(
     val checkpointsReached: Int,
     val trackedPointsJson: String = "[]",
     val trackedPointTimestampsJson: String = "[]",
-    val checkpointReachedAtJson: String = "{}"
+    val checkpointReachedAtJson: String = "{}",
+    val skippedCheckpointIdsJson: String = "[]"
 )
 
 class RouteConverters {
@@ -45,7 +45,7 @@ class RouteConverters {
 
     @TypeConverter
     fun toCheckpointList(value: String): List<Checkpoint> =
-        gson.fromJson(value, object : TypeToken<List<Checkpoint>>() {}.type)
+        gson.fromJson(value, Array<Checkpoint>::class.java)?.toList() ?: emptyList()
 
     @TypeConverter
     fun fromGeoPointList(value: List<GeoPoint>): String =
@@ -53,5 +53,5 @@ class RouteConverters {
 
     @TypeConverter
     fun toGeoPointList(value: String): List<GeoPoint> =
-        gson.fromJson(value, object : TypeToken<List<GeoPoint>>() {}.type)
+        gson.fromJson(value, Array<GeoPoint>::class.java)?.toList() ?: emptyList()
 }

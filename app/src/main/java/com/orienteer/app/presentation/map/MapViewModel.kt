@@ -3,6 +3,7 @@ package com.orienteer.app.presentation.map
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.orienteer.app.data.local.BasemapStyle
 import com.orienteer.app.data.local.MapDisplayPreferences
 import com.orienteer.app.data.local.UserPreferencesStore
 import com.orienteer.app.data.model.Checkpoint
@@ -35,7 +36,7 @@ class MapViewModel @Inject constructor(
     private val routeRepository: RouteRepository,
     private val locationRepository: LocationRepository,
     private val verifyCheckpoint: VerifyCheckpointUseCase,
-    preferencesStore: UserPreferencesStore,
+    private val preferencesStore: UserPreferencesStore,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -93,6 +94,15 @@ class MapViewModel @Inject constructor(
 
     fun getNextCheckpoint(): Checkpoint? =
         _uiState.value.route?.checkpoints?.firstOrNull { !it.isStart && !it.isReached }
+
+    fun cycleBasemapStyle() {
+        viewModelScope.launch {
+            val styles = BasemapStyle.entries
+            val current = mapDisplayPreferences.value.basemapStyle
+            val next = styles[(styles.indexOf(current) + 1) % styles.size]
+            preferencesStore.setBasemapStyle(next)
+        }
+    }
 
     private companion object {
         /** Preview map: slow GPS updates — only need a rough "you are here" dot. */

@@ -2,6 +2,7 @@ package com.orienteer.app.data.repository
 
 import com.google.gson.Gson
 import com.orienteer.app.data.local.dao.RouteDao
+import com.orienteer.app.data.local.dao.RunSessionDao
 import com.orienteer.app.data.local.entity.RouteEntity
 import com.orienteer.app.data.model.Checkpoint
 import com.orienteer.app.data.model.GeoPoint
@@ -17,6 +18,7 @@ import kotlin.math.roundToInt
 @Singleton
 class RouteRepository @Inject constructor(
     private val routeDao: RouteDao,
+    private val runSessionDao: RunSessionDao,
     private val gson: Gson
 ) {
     fun observeRoutes(): Flow<List<Route>> =
@@ -41,10 +43,15 @@ class RouteRepository @Inject constructor(
     suspend fun getLatestRoute(): Route? =
         routeDao.getLatestRoute()?.toDomain(gson)
 
+    /**
+     * Most common target distances from **run history** (not generated-only routes).
+     * With no history, returns 5 km only.
+     */
     suspend fun getFrequentTargetDistancesM(top: Int = 3, bucketM: Double = 500.0): List<Double> {
-        val recent = routeDao.getRecentTargetDistancesM()
+        val recent = runSessionDao.getRecentRunTargetDistancesM()
+            .filter { it in 500.0..50_000.0 }
         if (recent.isEmpty()) {
-            return listOf(3000.0, 5000.0, 10_000.0).take(top)
+            return listOf(5_000.0).take(top)
         }
         val counts = recent.groupingBy { (it / bucketM).roundToInt() }.eachCount()
         return counts.entries

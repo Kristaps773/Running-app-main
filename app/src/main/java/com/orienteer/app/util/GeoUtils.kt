@@ -1,6 +1,7 @@
 package com.orienteer.app.util
 
 import com.orienteer.app.data.model.GeoPoint
+import java.util.Locale
 import kotlin.math.*
 
 object GeoUtils {
@@ -105,13 +106,14 @@ object GeoUtils {
     /**
      * Build an OSRM coordinates path string from a list of points.
      * Format: "lng1,lat1;lng2,lat2;..."
+     * Always Locale.US so decimal commas (e.g. lv-LV) never break the OSRM path.
      */
     fun toOsrmCoordinates(points: List<GeoPoint>): String =
-        points.joinToString(";") { "%.6f,%.6f".format(it.longitude, it.latitude) }
+        points.joinToString(";") { toOsrmCoordinate(it) }
 
     /**
      * Build an OSRM single coordinate string.
      */
     fun toOsrmCoordinate(point: GeoPoint): String =
-        "%.6f,%.6f".format(point.longitude, point.latitude)
+        String.format(Locale.US, "%.6f,%.6f", point.longitude, point.latitude)
 }

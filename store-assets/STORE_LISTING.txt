@@ -1,0 +1,41 @@
+# Store listing copy (Paste into Play Console → Main store listing)
+
+## App name
+OrienteerRun
+
+## Short description (≤80 chars)
+Generate GPS orienteering-style run loops and hit real-world checkpoints.
+
+## Full description
+OrienteerRun is a free Android training app for orienteering-style running. Set a target distance, generate a loop of GPS checkpoints on real walking paths, then run the course with live map guidance and proximity verification.
+
+Features:
+• Random loop routes for your chosen distance
+• Checkpoints snapped to walkable paths (OSRM / OpenStreetMap)
+• Live map, distance, and checkpoint progress while you run
+• Offline-friendly history of past routes and runs on your device
+• No accounts, no ads, no in-app purchases
+
+Map data © OpenStreetMap contributors. Routing and map services use public OSM-related APIs.
+
+Privacy policy: https://kristaps773.github.io/Running-app-main/privacy-policy.html
+Contact: kristapsduda773@gmail.com
+
+## Category
+Sports (or Health & Fitness)
+
+## Contact email
+kristapsduda773@gmail.com
+
+## Assets prepared locally
+- store-assets/icon-512.png
+- store-assets/feature-graphic-1024x500.png
+- Phone screenshots (Alpine Trail UI, Play Console default listing en-GB, saved 2026-10-24):
+  - store-assets/screenshots/reddit-01-setup.png → 01-setup-alpine.jpg (1050×2100)
+  - store-assets/screenshots/reddit-02-map-route.png → 02-map-alpine.jpg (720×1600)
+  - store-assets/screenshots/reddit-03-active-run.png → 03-active-run-alpine.jpg (720×1600)
+  - store-assets/screenshots/reddit-04-history.png → 04-history-alpine.jpg (720×1600)
+- Desktop mirror: C:\Users\pc\Desktop\PlayStore-OrienteerRun-Assets\ (also 01-setup.jpg … 04-history.jpg)
+- Play Console: Default store listing → Phone screenshots (replaced orienteerrun-phone-01..04.jpg)
+- Publish status (2026-10-24): saved + submitted; Publishing overview → “Changes in review” → Change Phone screenshots (quick checks ~12 min, then Google review). Not live on public Play listing until approved.
+- Console display order (left→right): 01-setup, 04-history, 02-map, 03-active-run — drag to 01→02→03→04 if desired before approval completes.

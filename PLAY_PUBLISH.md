@@ -124,6 +124,8 @@ keytool -genkey -v -keystore orienteer-upload.jks -keyalg RSA -keysize 2048 -val
 
 Output: `app/build/outputs/bundle/release/app-release.aab`
 
+Play upload copy (named by version): `store-assets/releases/OrienteerRun-<versionName>-vc<versionCode>.aab` — use this path, not Desktop. Keep **only the latest** AAB there; describe older releases in [`CHANGELOG.md`](CHANGELOG.md) and git (see [`AGENTS.md`](AGENTS.md)).
+
 Requires signing props in `local.properties`. Without them, release builds are unsigned and Play will reject the upload.
 
 With `SENTRY_DSN` + `SENTRY_AUTH_TOKEN`, the Sentry Gradle plugin uploads ProGuard mappings on release builds so stack traces are readable.

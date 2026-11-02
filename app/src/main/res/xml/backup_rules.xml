@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Auto Backup (API <= 30): keep light prefs; exclude Room DB (GPS run history).
+  Users should use Settings → Export backup for full restore.
+-->
+<full-backup-content>
+    <exclude domain="database" path="orienteer_db" />
+    <exclude domain="database" path="orienteer_db-shm" />
+    <exclude domain="database" path="orienteer_db-wal" />
+</full-backup-content>

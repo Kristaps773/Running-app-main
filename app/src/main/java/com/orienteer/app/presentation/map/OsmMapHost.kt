@@ -17,36 +17,42 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.orienteer.app.R
+import com.orienteer.app.data.local.BasemapStyle
 import com.orienteer.app.data.local.MapDisplayPreferences
 import com.orienteer.app.data.model.GeoPoint
 import com.orienteer.app.data.model.Route
 import com.orienteer.app.ui.theme.mapOverlayColors
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.GeoPoint as OsmGeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 
-private const val LOCATION_MARKER_TITLE = "__user_location__"
+/** Title used for the GPS “you are here” marker — hidden during PDF export. */
+internal const val LOCATION_MARKER_TITLE = "__user_location__"
 
-private val cartoDarkTiles = XYTileSource(
-    "CartoDark",
-    0,
-    20,
-    256,
-    ".png",
-    arrayOf("https://basemaps.cartocdn.com/dark_all/"),
-    "CartoDB"
-)
+/** Temporarily remove the user-location marker (for PDF capture). Returns it for restore. */
+fun MapView.detachLocationMarker(): Marker? {
+    val existing = overlays
+        .filterIsInstance<Marker>()
+        .firstOrNull { it.title == LOCATION_MARKER_TITLE }
+        ?: return null
+    overlays.remove(existing)
+    return existing
+}
 
-private fun basemapTileSource(useDark: Boolean) =
-    if (useDark) cartoDarkTiles else TileSourceFactory.MAPNIK
+fun MapView.reattachLocationMarker(marker: Marker?) {
+    if (marker == null) return
+    if (overlays.none { it === marker }) {
+        overlays.add(marker)
+    }
+}
 
 /** Stable fingerprint — overlay refresh without recreating the MapView. */
 internal fun routeOverlayFingerprint(
     route: Route,
-    prefs: MapDisplayPreferences
+    prefs: MapDisplayPreferences,
+    basemapStyle: BasemapStyle = prefs.basemapStyle
 ): String = buildString {
     append(route.id)
     append('|')
@@ -63,6 +69,10 @@ internal fun routeOverlayFingerprint(
     append(prefs.showAirLegDistanceLabels)
     append('|')
     append(prefs.showWalkingPathPolyline)
+    append('|')
+    append(prefs.useIofCourseOverprint)
+    append('|')
+    append(basemapStyle.name)
 }
 
 /**
@@ -75,7 +85,7 @@ fun OsmMapHost(
     modifier: Modifier = Modifier,
     currentLocation: GeoPoint? = null,
     mapPrefs: MapDisplayPreferences = MapDisplayPreferences(),
-    useDarkBasemap: Boolean = false,
+    basemapStyle: BasemapStyle = BasemapStyle.STANDARD,
     interactive: Boolean = true,
     initialZoom: Double = 15.0,
     onMapReady: (MapView) -> Unit = {}
@@ -86,8 +96,8 @@ fun OsmMapHost(
     val mapColors = mapOverlayColors()
     val primaryArgb = MaterialTheme.colorScheme.primary.toArgb()
     val startArgb = MaterialTheme.colorScheme.tertiary.toArgb()
-    val overlayFingerprint = remember(route, mapPrefs) {
-        routeOverlayFingerprint(route, mapPrefs)
+    val overlayFingerprint = remember(route, mapPrefs, basemapStyle) {
+        routeOverlayFingerprint(route, mapPrefs, basemapStyle)
     }
 
     LaunchedEffect(Unit) {
@@ -114,8 +124,8 @@ fun OsmMapHost(
             modifier = modifier,
             factory = { ctx ->
                 MapView(ctx).apply {
-                    setTileSource(basemapTileSource(useDarkBasemap))
-                    setTag(R.id.map_tag_dark_basemap, useDarkBasemap)
+                    applyBasemapStyle(this, ctx, basemapStyle)
+                    setTag(R.id.map_tag_basemap_style, basemapStyle.name)
                     setTag(R.id.map_tag_route_overlay_key, overlayFingerprint)
                     setMultiTouchControls(interactive)
                     isClickable = interactive
@@ -134,7 +144,8 @@ fun OsmMapHost(
                             prefs = mapPrefs,
                             mapColors = mapColors,
                             primaryColorArgb = primaryArgb,
-                            startColorArgb = startArgb
+                            startColorArgb = startArgb,
+                            basemapStyle = basemapStyle
                         )
                         updateLocationMarker(this, currentLocation)
                     }
@@ -143,10 +154,10 @@ fun OsmMapHost(
             update = { view ->
                 mapView = view
 
-                val lastBasemap = view.getTag(R.id.map_tag_dark_basemap) as? Boolean
-                if (lastBasemap != useDarkBasemap) {
-                    view.setTileSource(basemapTileSource(useDarkBasemap))
-                    view.setTag(R.id.map_tag_dark_basemap, useDarkBasemap)
+                val lastBasemap = view.getTag(R.id.map_tag_basemap_style) as? String
+                if (lastBasemap != basemapStyle.name) {
+                    applyBasemapStyle(view, view.context, basemapStyle)
+                    view.setTag(R.id.map_tag_basemap_style, basemapStyle.name)
                 }
 
                 val lastOverlayKey = view.getTag(R.id.map_tag_route_overlay_key) as? String
@@ -158,7 +169,8 @@ fun OsmMapHost(
                         prefs = mapPrefs,
                         mapColors = mapColors,
                         primaryColorArgb = primaryArgb,
-                        startColorArgb = startArgb
+                        startColorArgb = startArgb,
+                        basemapStyle = basemapStyle
                     )
                 }
 
@@ -203,13 +215,19 @@ private fun updateLocationMarker(mapView: MapView, location: GeoPoint?) {
     }
 
     val osmPoint = OsmGeoPoint(location.latitude, location.longitude)
+    val icon = YouAreHereMarkerIcon.create(mapView.context)
     if (existing != null) {
-        val prev = existing.position
-        if (prev.latitude == osmPoint.latitude && prev.longitude == osmPoint.longitude) {
-            return
+        var dirty = false
+        if (existing.icon !== icon) {
+            existing.icon = icon
+            dirty = true
         }
-        existing.position = osmPoint
-        mapView.invalidate()
+        val prev = existing.position
+        if (prev.latitude != osmPoint.latitude || prev.longitude != osmPoint.longitude) {
+            existing.position = osmPoint
+            dirty = true
+        }
+        if (dirty) mapView.invalidate()
         return
     }
 
@@ -217,7 +235,10 @@ private fun updateLocationMarker(mapView: MapView, location: GeoPoint?) {
         Marker(mapView).apply {
             position = osmPoint
             title = LOCATION_MARKER_TITLE
+            setIcon(icon)
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            setOnMarkerClickListener { _, _ -> true }
+            infoWindow = null
         }
     )
     mapView.invalidate()
@@ -233,8 +254,8 @@ fun OsmReplayMapHost(
     val lifecycleOwner = LocalLifecycleOwner.current
     var mapView by remember { mutableStateOf<MapView?>(null) }
     val mapColors = mapOverlayColors()
-    val plannedColor = mapColors.plannedPath.toArgb()
-    val actualColor = mapColors.walkingPath.toArgb()
+    val airColor = mapColors.airLeg.toArgb()
+    val airHaloColor = mapColors.airLegHalo.toArgb()
 
     LaunchedEffect(Unit) {
         Configuration.getInstance().userAgentValue = context.packageName
@@ -272,30 +293,17 @@ fun OsmReplayMapHost(
             },
             update = { view ->
                 mapView = view
-                view.overlays.clear()
-                route.checkpoints.zipWithNext { a, b ->
-                    view.overlays.add(
-                        org.osmdroid.views.overlay.Polyline(view).apply {
-                            setPoints(
-                                listOf(
-                                    OsmGeoPoint(a.position.latitude, a.position.longitude),
-                                    OsmGeoPoint(b.position.latitude, b.position.longitude)
-                                )
-                            )
-                            outlinePaint.color = plannedColor
-                            outlinePaint.strokeWidth = 4f
-                            outlinePaint.pathEffect =
-                                android.graphics.DashPathEffect(floatArrayOf(20f, 12f), 0f)
-                        }
-                    )
-                }
+                clearRouteOverlays(view)
+                view.addOrienteeringAirLegOverlays(
+                    airLegSegmentsFromCheckpoints(route.checkpoints),
+                    airColor,
+                    airHaloColor
+                )
                 if (route.polylinePoints.isNotEmpty()) {
-                    view.overlays.add(
-                        org.osmdroid.views.overlay.Polyline(view).apply {
-                            setPoints(route.polylinePoints.map { OsmGeoPoint(it.latitude, it.longitude) })
-                            outlinePaint.color = actualColor
-                            outlinePaint.strokeWidth = 7f
-                        }
+                    addWalkingPathPolyline(
+                        view,
+                        route.polylinePoints,
+                        walkingPathPaintForBasemap(BasemapStyle.STANDARD)
                     )
                 }
                 view.invalidate()

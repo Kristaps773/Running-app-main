@@ -38,7 +38,7 @@ object AirLegLabelIcon {
         val canvas = Canvas(bitmap)
 
         val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(210, 20, 28, 40)
+            color = Color.argb(235, 173, 0, 120)
             style = Paint.Style.FILL
         }
         canvas.drawRoundRect(

@@ -10,6 +10,7 @@ import com.orienteer.app.data.repository.RouteRepository
 import com.orienteer.app.data.repository.RunDetail
 import com.orienteer.app.data.repository.RunRepository
 import com.orienteer.app.data.repository.RunSummary
+import com.orienteer.app.domain.RunHistoryTiming
 import com.orienteer.app.util.GeoUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,12 +23,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-data class SegmentSpeedSample(
-    val fromIndex: Int,
-    val toIndex: Int,
-    val speedKmh: Double
-)
-
 data class LegPace(
     val checkpointId: Int,
     val paceSecPerKm: Double?,
@@ -35,12 +30,25 @@ data class LegPace(
     val distanceM: Double
 )
 
+enum class CheckpointVisitStatus {
+    REACHED,
+    UNREACHABLE,
+    NOT_REACHED
+}
+
+data class CheckpointVisitUi(
+    val checkpointId: Int,
+    val label: String,
+    val status: CheckpointVisitStatus
+)
+
 data class RunDetailUi(
     val summary: RunSummary,
     val route: Route?,
     val trackedPoints: List<GeoPoint>,
-    val smoothedSegmentSpeeds: List<SegmentSpeedSample>,
-    val legPaces: List<LegPace>
+    val trackedPointTimestampsMs: List<Long>,
+    val legPaces: List<LegPace>,
+    val checkpointVisits: List<CheckpointVisitUi> = emptyList()
 )
 
 data class HistoryUiState(
@@ -65,85 +73,107 @@ class HistoryViewModel @Inject constructor(
                 showAirLegLines = UserPreferencesStore.DEFAULT_SHOW_AIR_LEGS,
                 showAirLegDistanceLabels = UserPreferencesStore.DEFAULT_SHOW_AIR_LABELS,
                 showWalkingPathPolyline = UserPreferencesStore.DEFAULT_SHOW_WALKING_PATH,
-                useDarkBasemap = UserPreferencesStore.DEFAULT_DARK_BASEMAP
+                basemapStyle = UserPreferencesStore.DEFAULT_BASEMAP_STYLE,
+                useIofCourseOverprint = UserPreferencesStore.DEFAULT_USE_IOF_COURSE_OVERPRINT
             )
         )
 
     init {
-        runRepository.observeRecentRuns()
+        runRepository.observeAllRuns()
             .onEach { runs ->
                 val previous = _uiState.value
-                if (runs.isEmpty()) {
-                    _uiState.value = previous.copy(runs = runs, selectedRun = null)
-                    return@onEach
-                }
                 val selectedId = previous.selectedRun?.summary?.sessionId
                 val selectionStillValid = selectedId != null && runs.any { it.sessionId == selectedId }
-                _uiState.value = previous.copy(runs = runs)
-                when {
-                    selectionStillValid -> Unit
-                    else -> loadRunDetail(runs.first().sessionId)
-                }
+                _uiState.value = previous.copy(
+                    runs = runs,
+                    selectedRun = if (selectionStillValid) previous.selectedRun else null
+                )
             }
             .launchIn(viewModelScope)
     }
 
     fun loadRunDetail(sessionId: Long) {
         viewModelScope.launch {
-            val detail = runRepository.getRunDetail(sessionId) ?: return@launch
-            val route = routeRepository.getRoute(detail.summary.routeId)
-            _uiState.value = _uiState.value.copy(
-                selectedRun = detail.toUi(route)
-            )
+            try {
+                val detail = runRepository.getRunDetail(sessionId) ?: return@launch
+                val route = routeRepository.getRoute(detail.summary.routeId)
+                _uiState.value = _uiState.value.copy(
+                    selectedRun = detail.toUi(route)
+                )
+            } catch (_: Exception) {
+                _uiState.value = _uiState.value.copy(selectedRun = null)
+            }
         }
     }
 
     fun deleteRun(sessionId: Long) {
         viewModelScope.launch {
             runRepository.deleteRun(sessionId)
+            if (_uiState.value.selectedRun?.summary?.sessionId == sessionId) {
+                _uiState.value = _uiState.value.copy(selectedRun = null)
+            }
+        }
+    }
+
+    /**
+     * Persist edited **leg** durations (checkpoint → checkpoint). GPS track is not modified.
+     * [legDurationMsToCheckpoint] maps destination checkpoint id → leg duration ms.
+     */
+    fun saveLegDurations(sessionId: Long, legDurationMsToCheckpoint: Map<Int, Long>) {
+        viewModelScope.launch {
+            val detail = runRepository.getRunDetail(sessionId) ?: return@launch
+            val route = routeRepository.getRoute(detail.summary.routeId)?.withFinishCheckpoint()
+                ?: return@launch
+            if (legDurationMsToCheckpoint.values.any { it < 0L }) return@launch
+            val orderedIds = route.checkpoints.map { it.id }
+            val reached = RunHistoryTiming.checkpointReachedAtFromLegDurations(
+                startedAtMs = detail.summary.startedAt,
+                orderedCheckpointIds = orderedIds,
+                legDurationMsToCheckpoint = legDurationMsToCheckpoint
+            )
+            val finishedAt = reached[orderedIds.lastOrNull()]
+            val elapsed = if (finishedAt != null) {
+                (finishedAt - detail.summary.startedAt).coerceAtLeast(0L)
+            } else {
+                detail.summary.elapsedTimeMs
+            }
+            runRepository.updateCheckpointReachedAt(
+                sessionId = sessionId,
+                checkpointReachedAtMs = reached,
+                elapsedTimeMs = elapsed,
+                finishedAt = finishedAt
+            )
+            loadRunDetail(sessionId)
         }
     }
 
     private fun RunDetail.toUi(route: Route?): RunDetailUi {
-        val segmentSpeeds = computeSmoothedSegmentSpeeds(trackedPoints, trackedPointTimestampsMs)
+        val course = route?.withFinishCheckpoint()
         val paces = computeLegPaces(
-            route = route,
+            route = course,
             reachedAtMs = checkpointReachedAtMs
         )
         return RunDetailUi(
             summary = summary,
-            route = route,
+            route = course,
             trackedPoints = trackedPoints,
-            smoothedSegmentSpeeds = segmentSpeeds,
-            legPaces = paces
+            trackedPointTimestampsMs = trackedPointTimestampsMs,
+            legPaces = paces,
+            checkpointVisits = computeCheckpointVisits(
+                route = course,
+                reachedAtMs = checkpointReachedAtMs,
+                skippedIds = skippedCheckpointIds
+            )
         )
-    }
-
-    private fun computeSmoothedSegmentSpeeds(points: List<GeoPoint>, times: List<Long>): List<SegmentSpeedSample> {
-        if (points.size < 2 || points.size != times.size) return emptyList()
-        val raw = points.indices.drop(1).mapNotNull { i ->
-            val dtMs = times[i] - times[i - 1]
-            if (dtMs <= 0) return@mapNotNull null
-            val dM = GeoUtils.distanceMeters(points[i - 1], points[i])
-            val kmh = (dM / 1000.0) / (dtMs / 3_600_000.0)
-            SegmentSpeedSample(fromIndex = i - 1, toIndex = i, speedKmh = kmh)
-        }
-        return raw.mapIndexed { index, s ->
-            val from = (index - 1).coerceAtLeast(0)
-            val to = (index + 1).coerceAtMost(raw.lastIndex)
-            val avg = raw.subList(from, to + 1).map { it.speedKmh }.average()
-            s.copy(speedKmh = avg)
-        }
     }
 
     private fun computeLegPaces(route: Route?, reachedAtMs: Map<Int, Long>): List<LegPace> {
         if (route == null) return emptyList()
-        val checkpoints = route.checkpoints.filter { !it.isStart }
-        return checkpoints.map { cp ->
-            val prevId = cp.id - 1
-            val startMs = reachedAtMs[prevId]
+        // Every step after start (including trailing finish), not GPS breadcrumbs.
+        return route.checkpoints.zipWithNext { prev, cp ->
+            val startMs = reachedAtMs[prev.id]
             val endMs = reachedAtMs[cp.id]
-            val durationMs = if (startMs != null && endMs != null && endMs > startMs) endMs - startMs else null
+            val durationMs = if (startMs != null && endMs != null && endMs >= startMs) endMs - startMs else null
             val pace = if (durationMs != null && cp.distanceFromPrev > 0) {
                 (durationMs / 1000.0) / (cp.distanceFromPrev / 1000.0)
             } else {
@@ -157,4 +187,27 @@ class HistoryViewModel @Inject constructor(
             )
         }
     }
+
+    private fun computeCheckpointVisits(
+        route: Route?,
+        reachedAtMs: Map<Int, Long>,
+        skippedIds: Set<Int>
+    ): List<CheckpointVisitUi> {
+        if (route == null) return emptyList()
+        return route.checkpoints.mapIndexed { index, cp ->
+            val isFinish = cp.isStart && index == route.checkpoints.lastIndex && route.hasTrailingFinish
+            val label = when {
+                isFinish -> "Finish"
+                cp.isStart -> "Start"
+                else -> "CP ${cp.id}"
+            }
+            val status = when {
+                cp.id in skippedIds -> CheckpointVisitStatus.UNREACHABLE
+                cp.id in reachedAtMs -> CheckpointVisitStatus.REACHED
+                else -> CheckpointVisitStatus.NOT_REACHED
+            }
+            CheckpointVisitUi(checkpointId = cp.id, label = label, status = status)
+        }
+    }
 }
+

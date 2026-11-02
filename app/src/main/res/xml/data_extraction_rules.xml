@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cloud backup: exclude Room DB (GPS tracks). Device-to-device transfer may include DB
+  so a phone upgrade can carry history; explicit JSON export remains the reliable path.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="database" path="orienteer_db" />
+        <exclude domain="database" path="orienteer_db-shm" />
+        <exclude domain="database" path="orienteer_db-wal" />
+    </cloud-backup>
+</data-extraction-rules>

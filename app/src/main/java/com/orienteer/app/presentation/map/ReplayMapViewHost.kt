@@ -5,6 +5,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import com.orienteer.app.R
+import com.orienteer.app.data.local.BasemapStyle
 import org.osmdroid.config.Configuration
 import org.osmdroid.views.MapView
 
@@ -13,7 +14,7 @@ import org.osmdroid.views.MapView
  */
 fun createReplayMapHost(
     context: Context,
-    useDarkBasemap: Boolean,
+    basemapStyle: BasemapStyle,
     compactPreview: Boolean
 ): FrameLayout {
     Configuration.getInstance().userAgentValue = context.packageName
@@ -21,14 +22,20 @@ fun createReplayMapHost(
         clipChildren = true
         clipToPadding = true
         clipToOutline = true
-        setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+        // Software layer helps clip compact cards but often blanks OSM tiles.
+        // Full-screen / interactive replay needs hardware so the basemap is visible.
+        setLayerType(
+            if (compactPreview) View.LAYER_TYPE_SOFTWARE else View.LAYER_TYPE_HARDWARE,
+            null
+        )
         layoutParams = ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         )
         addView(
             MapView(context).apply {
-                setTileSource(defaultBasemapTileSource(useDarkBasemap))
+                applyBasemapStyle(this, context, basemapStyle)
+                setTag(R.id.map_tag_basemap_style, basemapStyle.name)
                 controller.setZoom(15.0)
                 applyMapViewClipping(this)
                 attachScrollLimitListener(this)

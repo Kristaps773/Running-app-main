@@ -12,7 +12,8 @@ import androidx.compose.ui.graphics.Color
 data class MapOverlayColors(
     val plannedPath: Color,
     val actualPath: Color,
-    val airLeg: Color
+    val airLeg: Color,
+    val airLegHalo: Color
 ) {
     /** Walking / GPS track color (same as [actualPath]). */
     val walkingPath: Color get() = actualPath
@@ -22,7 +23,8 @@ val LocalMapOverlayColors = staticCompositionLocalOf {
     MapOverlayColors(
         plannedPath = MapPlannedPath,
         actualPath = MapActualPath,
-        airLeg = MapAirLeg
+        airLeg = MapAirLeg,
+        airLegHalo = MapAirLegHalo
     )
 }
 
@@ -36,16 +38,16 @@ private val OrienteerDarkColorScheme = darkColorScheme(
     secondaryContainer = OrienteerSecondaryContainer,
     onSecondaryContainer = OrienteerOnSecondaryContainer,
     tertiary = OrienteerTertiary,
-    onTertiary = OrienteerOnPrimary,
-    tertiaryContainer = OrienteerPrimaryContainer,
-    onTertiaryContainer = OrienteerOnPrimaryContainer,
+    onTertiary = OrienteerOnTertiary,
+    tertiaryContainer = OrienteerTertiaryContainer,
+    onTertiaryContainer = OrienteerOnTertiaryContainer,
     background = OrienteerBackground,
     onBackground = OrienteerOnBackground,
     surface = OrienteerSurface,
     onSurface = OrienteerOnSurface,
     surfaceVariant = OrienteerSurfaceContainerHighest,
     onSurfaceVariant = OrienteerOnSurfaceVariant,
-    surfaceContainerLowest = Color(0xFF060E20),
+    surfaceContainerLowest = OrienteerSurfaceContainerLowest,
     surfaceContainerLow = OrienteerSurfaceContainerLow,
     surfaceContainer = OrienteerSurfaceContainer,
     surfaceContainerHigh = OrienteerSurfaceContainerHigh,
@@ -53,9 +55,12 @@ private val OrienteerDarkColorScheme = darkColorScheme(
     outline = OrienteerOutline,
     outlineVariant = OrienteerOutlineVariant,
     error = OrienteerError,
-    onError = Color(0xFF690005),
-    errorContainer = Color(0xFF93000A),
-    onErrorContainer = Color(0xFFFFDAD6),
+    onError = OrienteerOnError,
+    errorContainer = OrienteerErrorContainer,
+    onErrorContainer = OrienteerOnErrorContainer,
+    inverseSurface = LightInverseSurface,
+    inverseOnSurface = LightInverseOnSurface,
+    inversePrimary = OrienteerInversePrimary,
     surfaceTint = OrienteerPrimary
 )
 
@@ -91,6 +96,7 @@ private val OrienteerLightColorScheme = lightColorScheme(
     onErrorContainer = LightOnErrorContainer,
     inverseSurface = LightInverseSurface,
     inverseOnSurface = LightInverseOnSurface,
+    inversePrimary = LightInversePrimary,
     surfaceTint = LightSurfaceTint
 )
 
@@ -105,13 +111,15 @@ fun OrienteerTheme(
         MapOverlayColors(
             plannedPath = MapPlannedPath,
             actualPath = MapActualPath,
-            airLeg = MapAirLeg
+            airLeg = MapAirLeg,
+            airLegHalo = MapAirLegHalo
         )
     } else {
         MapOverlayColors(
             plannedPath = LightMapPlannedPath,
             actualPath = LightMapActualPath,
-            airLeg = LightMapAirLeg
+            airLeg = LightMapAirLeg,
+            airLegHalo = LightMapAirLegHalo
         )
     }
 

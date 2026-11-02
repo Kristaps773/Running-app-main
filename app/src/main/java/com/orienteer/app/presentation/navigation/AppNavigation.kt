@@ -8,8 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DirectionsRun
+import com.orienteer.app.ui.icons.OrienteerIcons
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -36,11 +35,13 @@ import com.orienteer.app.presentation.history.HistoryScreen
 import com.orienteer.app.presentation.map.MapScreen
 import com.orienteer.app.presentation.run.RunScreen
 import com.orienteer.app.presentation.settings.SettingsScreen
+import com.orienteer.app.presentation.setup.EndpointPickerScreen
 import com.orienteer.app.presentation.setup.SetupScreen
 import com.orienteer.app.presentation.setup.SetupViewModel
 
 sealed class Screen(val route: String) {
     data object Setup : Screen("setup")
+    data object EndpointPicker : Screen("setup/endpoints")
     data object Map : Screen("map/{routeId}") {
         fun createRoute(routeId: String) = "map/$routeId"
     }
@@ -60,7 +61,10 @@ sealed class Screen(val route: String) {
 @Composable
 fun AppNavigation(
     hasLocationPermission: Boolean,
-    onRequestLocationPermission: () -> Unit
+    onRequestLocationPermission: () -> Unit,
+    startAtHistory: Boolean = false,
+    openActiveRunRouteId: String? = null,
+    onConsumedOpenActiveRun: () -> Unit = {}
 ) {
     val navController = rememberNavController()
     val activeRunVm: ActiveRunBarViewModel = hiltViewModel()
@@ -70,11 +74,20 @@ fun AppNavigation(
     val hideActiveBanner = currentRoute.startsWith("run/") &&
         navBackStackEntry?.arguments?.getString("routeId") == activeRouteId
     val showActiveBanner = activeRouteId != null && !hideActiveBanner
+    val startDestination = if (startAtHistory) Screen.History.route else Screen.Setup.route
+
+    LaunchedEffect(openActiveRunRouteId) {
+        val routeId = openActiveRunRouteId ?: return@LaunchedEffect
+        navController.navigate(Screen.Run.createRoute(routeId)) {
+            launchSingleTop = true
+        }
+        onConsumedOpenActiveRun()
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
-            startDestination = Screen.Setup.route
+            startDestination = startDestination
         ) {
             composable(Screen.Setup.route) {
                 SetupScreen(
@@ -86,8 +99,37 @@ fun AppNavigation(
                     },
                     onOpenHistory = { navController.navigate(Screen.History.route) },
                     onOpenSettings = { navController.navigate(Screen.Settings.route) },
+                    onOpenEndpointPicker = {
+                        navController.navigate(Screen.EndpointPicker.route)
+                    },
                     hasLocationPermission = hasLocationPermission,
                     onRequestLocationPermission = onRequestLocationPermission
+                )
+            }
+
+            composable(Screen.EndpointPicker.route) {
+                val setupEntry = remember(navController) {
+                    runCatching { navController.getBackStackEntry(Screen.Setup.route) }.getOrNull()
+                }
+                val setupViewModel: SetupViewModel? = setupEntry?.let { hiltViewModel(it) }
+                if (setupViewModel == null) {
+                    LaunchedEffect(Unit) { navController.popBackStack() }
+                    return@composable
+                }
+                val customStart by setupViewModel.customStart.collectAsStateWithLifecycle()
+                val customFinish by setupViewModel.customFinish.collectAsStateWithLifecycle()
+                val mapDisplay by setupViewModel.mapDisplayPreferences.collectAsStateWithLifecycle()
+                EndpointPickerScreen(
+                    initialStart = customStart,
+                    initialFinish = customFinish,
+                    basemapStyle = mapDisplay.basemapStyle,
+                    resolveGps = { setupViewModel.resolveGpsForPicker() },
+                    onCycleBasemap = setupViewModel::cycleBasemapStyle,
+                    onConfirm = { start, finish ->
+                        setupViewModel.applyCourseEndpoints(start, finish)
+                        navController.popBackStack()
+                    },
+                    onCancel = { navController.popBackStack() }
                 )
             }
 
@@ -154,7 +196,7 @@ fun AppNavigation(
             composable(Screen.History.route) {
                 HistoryScreen(
                     onNavigateBack = { navController.popBackStack() },
-                    onOpenFullMap = { sessionId ->
+                    onOpenRunDetail = { sessionId ->
                         navController.navigate(Screen.HistoryMap.createRoute(sessionId))
                     }
                 )
@@ -210,7 +252,7 @@ private fun ActiveRunBanner(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    Icons.Default.DirectionsRun,
+                    OrienteerIcons.DirectionsRun,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary
                 )

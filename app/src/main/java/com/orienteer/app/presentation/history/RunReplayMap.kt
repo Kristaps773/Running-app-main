@@ -17,12 +17,18 @@ import androidx.compose.ui.viewinterop.AndroidView
 import android.widget.FrameLayout
 import com.orienteer.app.data.model.Checkpoint
 import com.orienteer.app.data.model.GeoPoint
+import com.orienteer.app.presentation.map.IofCourseOverprintOverlay
 import com.orienteer.app.presentation.map.addCheckpointMarkers
+import com.orienteer.app.presentation.map.addOrienteeringAirLegOverlays
 import com.orienteer.app.presentation.map.addReplayPolylines
+import com.orienteer.app.presentation.map.airLegSegmentsFromCheckpoints
+import com.orienteer.app.ui.theme.mapOverlayColors
 import com.orienteer.app.presentation.map.boundingBoxForReplay
 import com.orienteer.app.presentation.map.configureReplayMapInteraction
 import com.orienteer.app.presentation.map.createReplayMapHost
-import com.orienteer.app.presentation.map.defaultBasemapTileSource
+import com.orienteer.app.data.local.BasemapStyle
+import com.orienteer.app.presentation.map.applyBasemapStyle
+import com.orienteer.app.presentation.map.clearRouteOverlays
 import com.orienteer.app.presentation.map.fitMapToBoundingBox
 import com.orienteer.app.presentation.map.requireMapViewFromHost
 import org.osmdroid.util.GeoPoint as OsmGeoPoint
@@ -32,14 +38,18 @@ fun RunReplayMap(
     planned: List<GeoPoint>,
     actual: List<GeoPoint>,
     checkpoints: List<Checkpoint>,
-    useDarkBasemap: Boolean,
+    basemapStyle: BasemapStyle,
     modifier: Modifier = Modifier,
-    compactPreview: Boolean = true
+    compactPreview: Boolean = true,
+    useIofCourseOverprint: Boolean = false
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary.toArgb()
     val startColor = MaterialTheme.colorScheme.tertiary.toArgb()
+    val mapColors = mapOverlayColors()
+    val airColor = mapColors.airLeg.toArgb()
+    val airHaloColor = mapColors.airLegHalo.toArgb()
     var appliedReplayKey by remember { mutableStateOf<String?>(null) }
-    var appliedTileKey by remember { mutableStateOf<Boolean?>(null) }
+    var appliedTileKey by remember { mutableStateOf<String?>(null) }
 
     AndroidView(
         modifier = modifier
@@ -48,22 +58,26 @@ fun RunReplayMap(
         factory = { ctx ->
             createReplayMapHost(
                 context = ctx,
-                useDarkBasemap = useDarkBasemap,
+                basemapStyle = basemapStyle,
                 compactPreview = compactPreview
             )
         },
         update = { view ->
             val map = (view as FrameLayout).requireMapViewFromHost()
             configureReplayMapInteraction(map, compactPreview)
-            if (appliedTileKey != useDarkBasemap) {
-                map.setTileSource(defaultBasemapTileSource(useDarkBasemap))
-                appliedTileKey = useDarkBasemap
+            val styleKey = basemapStyle.name
+            if (appliedTileKey != styleKey) {
+                applyBasemapStyle(map, map.context, basemapStyle)
+                map.setTag(com.orienteer.app.R.id.map_tag_basemap_style, styleKey)
+                appliedTileKey = styleKey
             }
 
             val replayKey = buildString {
-                append(useDarkBasemap)
+                append(styleKey)
                 append('|')
                 append(compactPreview)
+                append('|')
+                append(useIofCourseOverprint)
                 append('|')
                 append(planned.size)
                 planned.forEach {
@@ -96,15 +110,35 @@ fun RunReplayMap(
                 return@AndroidView
             }
 
-            map.overlays.clear()
+            clearRouteOverlays(map)
+            // Contours sit in overlays; re-apply style so Pseud-O keeps them under polylines.
+            applyBasemapStyle(map, map.context, basemapStyle)
             val center = actual.firstOrNull() ?: planned.firstOrNull() ?: checkpoints.firstOrNull()?.position
             if (center != null) {
                 map.controller.setCenter(OsmGeoPoint(center.latitude, center.longitude))
             }
 
-            addReplayPolylines(map, planned, actual)
+            addReplayPolylines(map, planned, actual) {
+                if (!useIofCourseOverprint && checkpoints.size >= 2) {
+                    map.addOrienteeringAirLegOverlays(
+                        airLegSegmentsFromCheckpoints(checkpoints),
+                        airColor,
+                        airHaloColor
+                    )
+                }
+            }
             if (checkpoints.isNotEmpty()) {
-                addCheckpointMarkers(map, checkpoints, primaryColor, startColor)
+                if (useIofCourseOverprint) {
+                    map.overlays.add(
+                        IofCourseOverprintOverlay(
+                            checkpoints = checkpoints,
+                            purpleArgb = airColor,
+                            showLegs = true
+                        )
+                    )
+                } else {
+                    addCheckpointMarkers(map, checkpoints, primaryColor, startColor)
+                }
             }
 
             val box = boundingBoxForReplay(planned, actual, checkpoints)
@@ -121,15 +155,17 @@ fun RunReplayMapFullScreen(
     planned: List<GeoPoint>,
     actual: List<GeoPoint>,
     checkpoints: List<Checkpoint>,
-    useDarkBasemap: Boolean,
-    modifier: Modifier = Modifier
+    basemapStyle: BasemapStyle,
+    modifier: Modifier = Modifier,
+    useIofCourseOverprint: Boolean = false
 ) {
     RunReplayMap(
         planned = planned,
         actual = actual,
         checkpoints = checkpoints,
-        useDarkBasemap = useDarkBasemap,
+        basemapStyle = basemapStyle,
         modifier = modifier.fillMaxSize(),
-        compactPreview = false
+        compactPreview = false,
+        useIofCourseOverprint = useIofCourseOverprint
     )
 }

@@ -3,29 +3,71 @@ package com.orienteer.app.presentation.setup
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DirectionsRun
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import com.orienteer.app.ui.icons.OrienteerIcons
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.orienteer.app.data.model.Route
-import com.orienteer.app.presentation.components.*
+import com.orienteer.app.domain.CourseEndpoints
+import com.orienteer.app.domain.ProAccess
+import com.orienteer.app.presentation.components.DistanceChip
+import com.orienteer.app.presentation.components.PrimaryGreenButton
+import com.orienteer.app.presentation.components.SettingsGroupedList
+import com.orienteer.app.presentation.components.SettingsListRow
+import com.orienteer.app.presentation.components.StitchBackground
+import com.orienteer.app.ui.theme.BrandForest
+import com.orienteer.app.ui.theme.OrienteerCardShape
+import com.orienteer.app.ui.theme.OrienteerHeroShape
+import com.orienteer.app.ui.theme.OrienteerInnerShape
+import com.orienteer.app.ui.theme.OrienteerRadius
+import com.orienteer.app.ui.theme.OrienteerSpacing
+import com.orienteer.app.ui.theme.OrienteerTheme
+import com.orienteer.app.ui.theme.ThemeMode
+import com.orienteer.app.util.GeoUtils
 
 @Composable
 fun SetupScreen(
@@ -33,6 +75,7 @@ fun SetupScreen(
     onViewPreviousRoute: (String) -> Unit,
     onOpenHistory: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onOpenEndpointPicker: () -> Unit = {},
     hasLocationPermission: Boolean = true,
     onRequestLocationPermission: () -> Unit = {},
     viewModel: SetupViewModel = hiltViewModel()
@@ -40,9 +83,21 @@ fun SetupScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val distanceKm by viewModel.distanceKm.collectAsStateWithLifecycle()
     val latestRoute by viewModel.latestRoute.collectAsStateWithLifecycle()
+    val customStart by viewModel.customStart.collectAsStateWithLifecycle()
+    val customFinish by viewModel.customFinish.collectAsStateWithLifecycle()
     val presetDistances = remember { listOf(3.0, 5.0, 10.0) }
     var customDistanceActive by remember { mutableStateOf(false) }
     var customDistanceText by remember { mutableStateOf("") }
+    val minDistanceKm = remember(customStart, customFinish) {
+        val s = customStart
+        val f = customFinish
+        if (s != null && f != null) {
+            CourseEndpoints.minAirDistanceM(s, f) / 1000.0
+        } else {
+            0.5
+        }
+    }
+    val isOneWay = customFinish != null
 
     LaunchedEffect(distanceKm) {
         if (distanceKm !in presetDistances && !customDistanceActive) {
@@ -65,15 +120,72 @@ fun SetupScreen(
                     viewModel.resetAfterNavigation()
                 }
             }
-            // Stay on Setup during RefiningRoute — avoid Map "Routing…" and double-nav.
             else -> Unit
         }
         previousState = uiState
     }
 
+    SetupScreenContent(
+        uiState = uiState,
+        distanceKm = distanceKm,
+        latestRouteId = latestRoute?.id,
+        customDistanceActive = customDistanceActive,
+        customDistanceText = customDistanceText,
+        hasLocationPermission = hasLocationPermission,
+        isOneWay = isOneWay,
+        minDistanceKm = minDistanceKm,
+        endpointsSummary = when {
+            isOneWay && customStart != null && customFinish != null ->
+                "One-way - ${GeoUtils.formatDistance(CourseEndpoints.minAirDistanceM(customStart!!, customFinish!!))} apart"
+            customStart != null ->
+                "Custom start - return to start"
+            else ->
+                "Using GPS - return to start"
+        },
+        onCustomDistanceActiveChange = { customDistanceActive = it },
+        onCustomDistanceTextChange = { customDistanceText = it },
+        onSetDistance = viewModel::setDistance,
+        onGenerate = viewModel::generateRoute,
+        onDismissError = viewModel::dismissError,
+        onViewPreviousRoute = onViewPreviousRoute,
+        onOpenHistory = onOpenHistory,
+        onOpenSettings = onOpenSettings,
+        onOpenEndpointPicker = onOpenEndpointPicker,
+        onClearEndpoints = viewModel::clearCourseEndpoints,
+        onRequestLocationPermission = onRequestLocationPermission
+    )
+}
+
+@Composable
+private fun SetupScreenContent(
+    uiState: SetupUiState,
+    distanceKm: Double,
+    latestRouteId: String?,
+    customDistanceActive: Boolean,
+    customDistanceText: String,
+    hasLocationPermission: Boolean,
+    isOneWay: Boolean = false,
+    minDistanceKm: Double = 0.5,
+    endpointsSummary: String = "Using GPS - return to start",
+    onCustomDistanceActiveChange: (Boolean) -> Unit,
+    onCustomDistanceTextChange: (String) -> Unit,
+    onSetDistance: (Double) -> Unit,
+    onGenerate: () -> Unit,
+    onDismissError: () -> Unit,
+    onViewPreviousRoute: (String) -> Unit,
+    onOpenHistory: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenEndpointPicker: () -> Unit = {},
+    onClearEndpoints: () -> Unit = {},
+    onRequestLocationPermission: () -> Unit
+) {
+    val cardRadius = OrienteerRadius.card
+
     StitchBackground {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val layout = remember(maxHeight) { setupLayoutMetrics(maxHeight.value) }
+            val cardPad = layout.cardPaddingDp.dp
+            val innerShape = OrienteerInnerShape(cardRadius, cardPad)
 
             Column(modifier = Modifier.fillMaxSize()) {
                 Column(
@@ -81,27 +193,28 @@ fun SetupScreen(
                         .weight(1f)
                         .fillMaxWidth()
                         .statusBarsPadding()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 24.dp),
+                        .padding(horizontal = OrienteerSpacing.screenHorizontal),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Spacer(Modifier.height(layout.topSpacerDp.dp))
 
+                    // Compact brand — solid forest fill; sized via layout metrics.
                     Box(
                         modifier = Modifier
                             .size(layout.iconSizeDp.dp)
-                            .clip(RoundedCornerShape(16.dp))
+                            .clip(OrienteerHeroShape)
+                            .background(BrandForest)
                             .border(
                                 1.dp,
-                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                                RoundedCornerShape(16.dp)
+                                BrandForest,
+                                OrienteerHeroShape
                             ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.DirectionsRun,
+                            imageVector = OrienteerIcons.DirectionsRun,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = Color.White,
                             modifier = Modifier.size(layout.iconInnerDp.dp)
                         )
                     }
@@ -110,99 +223,140 @@ fun SetupScreen(
 
                     Text(
                         text = "OrienteerRun",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onBackground
                     )
-                    Text(
-                        text = "Generate your route, find the checkpoints.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 4.dp, bottom = layout.subtitleBottomDp.dp)
-                    )
+                    if (layout.showTagline) {
+                        Text(
+                            text = if (isOneWay) {
+                                "Start here, finish there."
+                            } else {
+                                "Generate a loop. Hit real checkpoints."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(top = 4.dp, bottom = layout.subtitleBottomDp.dp)
+                        )
+                    } else {
+                        Spacer(Modifier.height(layout.subtitleBottomDp.dp))
+                    }
 
+                    // Distance card
                     Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(
-                                1.dp,
-                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f),
-                                RoundedCornerShape(16.dp)
-                            ),
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = OrienteerCardShape,
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        tonalElevation = 1.dp
                     ) {
                         Column(
-                            modifier = Modifier.padding(layout.cardPaddingDp.dp),
+                            modifier = Modifier.padding(cardPad),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                text = "TARGET DISTANCE",
+                                text = "Target distance",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.SemiBold
                             )
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(OrienteerSpacing.xxs))
                             Text(
-                                text = "%.1f km".format(distanceKm),
+                                text = "%.1f".format(distanceKm),
                                 fontSize = layout.distanceFontSp.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
+                                color = MaterialTheme.colorScheme.primary,
+                                letterSpacing = (-1).sp
                             )
-                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = "kilometers",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (isOneWay) {
+                                Text(
+                                    text = "At least %.1f km (straight to finish). Extra adds checkpoints."
+                                        .format(minDistanceKm),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                            Spacer(Modifier.height(OrienteerSpacing.xs))
+                            val sliderMin = if (isOneWay) {
+                                minDistanceKm.toFloat().coerceAtLeast(0.5f)
+                            } else {
+                                1f
+                            }
+                            val sliderMax = ProAccess.maxTargetDistanceKm().toFloat()
+                            val sliderValue = distanceKm.toFloat().coerceIn(sliderMin, sliderMax)
                             Slider(
-                                value = distanceKm.toFloat(),
+                                value = sliderValue,
                                 onValueChange = {
-                                    if (!customDistanceActive && it.toDouble() !in presetDistances) {
-                                        customDistanceActive = true
+                                    if (!customDistanceActive && it.toDouble() !in listOf(3.0, 5.0, 10.0)) {
+                                        onCustomDistanceActiveChange(true)
                                     }
-                                    viewModel.setDistance(it.toDouble())
+                                    onSetDistance(it.toDouble())
                                     if (customDistanceActive) {
-                                        customDistanceText = "%.1f".format(it)
+                                        onCustomDistanceTextChange("%.1f".format(it))
                                     }
                                 },
-                                valueRange = 1f..42f,
+                                valueRange = sliderMin..sliderMax.coerceAtLeast(sliderMin + 0.1f),
                                 steps = 40,
                                 modifier = Modifier.fillMaxWidth(),
                                 colors = SliderDefaults.colors(
                                     thumbColor = MaterialTheme.colorScheme.primary,
-                                    activeTrackColor = MaterialTheme.colorScheme.primary
+                                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                                    inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                                 )
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Spacer(Modifier.height(OrienteerSpacing.xxs))
+                            Row(horizontalArrangement = Arrangement.spacedBy(OrienteerSpacing.xs)) {
                                 listOf(3.0, 5.0, 10.0).forEach { km ->
+                                    val chipEnabled = !isOneWay || km >= minDistanceKm - 0.05
                                     DistanceChip(
                                         label = "${km.toInt()} km",
                                         selected = !customDistanceActive && distanceKm == km,
                                         onClick = {
-                                            customDistanceActive = false
-                                            viewModel.setDistance(km)
+                                            if (!chipEnabled) return@DistanceChip
+                                            onCustomDistanceActiveChange(false)
+                                            onSetDistance(km)
                                         },
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
                             }
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(OrienteerSpacing.xxs))
                             if (customDistanceActive) {
                                 OutlinedTextField(
                                     value = customDistanceText,
                                     onValueChange = { text ->
-                                        customDistanceText = text.filter { it.isDigit() || it == '.' }
-                                        customDistanceText.toDoubleOrNull()?.let { viewModel.setDistance(it) }
+                                        val filtered = text.filter { it.isDigit() || it == '.' }
+                                        onCustomDistanceTextChange(filtered)
+                                        filtered.toDoubleOrNull()?.let(onSetDistance)
                                     },
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(innerShape),
                                     singleLine = true,
                                     suffix = { Text("km") },
-                                    placeholder = { Text("Enter distance") },
-                                    shape = RoundedCornerShape(12.dp)
+                                    placeholder = { Text("Custom distance") },
+                                    shape = innerShape,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                                    )
                                 )
                             } else {
                                 DistanceChip(
                                     label = "Other",
                                     selected = false,
                                     onClick = {
-                                        customDistanceActive = true
-                                        customDistanceText = "%.1f".format(distanceKm)
+                                        onCustomDistanceActiveChange(true)
+                                        onCustomDistanceTextChange("%.1f".format(distanceKm))
                                     },
                                     modifier = Modifier.fillMaxWidth()
                                 )
@@ -212,40 +366,71 @@ fun SetupScreen(
 
                     Spacer(Modifier.height(layout.sectionSpacerDp.dp))
 
-                    val checkpointCount = estimateCheckpoints(distanceKm)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        InfoChip(Icons.Default.LocationOn, "~$checkpointCount checkpoints")
-                        InfoChip(Icons.Default.Schedule, "${estimateTime(distanceKm)} min est.")
+                    // Estimate strip
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = OrienteerCardShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    horizontal = OrienteerSpacing.sm,
+                                    vertical = OrienteerSpacing.xs
+                                ),
+                            horizontalArrangement = Arrangement.spacedBy(OrienteerSpacing.xs)
+                        ) {
+                            InfoChip(
+                                icon = Icons.Default.LocationOn,
+                                label = "~${estimateCheckpoints(distanceKm)} checkpoints",
+                                modifier = Modifier.weight(1f)
+                            )
+                            InfoChip(
+                                icon = OrienteerIcons.Schedule,
+                                label = "${estimateTime(distanceKm)} min est.",
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
 
                     Spacer(Modifier.height(layout.afterInfoSpacerDp.dp))
 
-                    if (latestRoute != null) {
+                    // Single-line rows to keep Settings above the fold
+                    SettingsGroupedList {
+                        if (latestRouteId != null) {
+                            SettingsListRow(
+                                title = "Previous route",
+                                onClick = { onViewPreviousRoute(latestRouteId) },
+                                flat = true
+                            )
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+                            )
+                        }
                         SettingsListRow(
-                            title = "View previous route",
-                            onClick = { onViewPreviousRoute(latestRoute!!.id) },
-                            modifier = Modifier.padding(bottom = 8.dp)
+                            title = "Run history",
+                            onClick = onOpenHistory,
+                            flat = true
                         )
-                    }
-                    SettingsListRow(
-                        title = "Run history",
-                        subtitle = "Past runs and replay",
-                        onClick = onOpenHistory
-                    )
-                    SettingsListRow(
-                        title = "Settings",
-                        subtitle = "Route generation and map display",
-                        onClick = onOpenSettings,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-
-                    if (!hasLocationPermission) {
-                        Spacer(Modifier.height(layout.sectionSpacerDp.dp))
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+                        )
                         SettingsListRow(
-                            title = "Location permission required",
-                            subtitle = "Tap to grant access for GPS routes",
-                            onClick = onRequestLocationPermission
+                            title = "Settings",
+                            onClick = onOpenSettings,
+                            flat = true
                         )
+                        if (!hasLocationPermission) {
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+                            )
+                            SettingsListRow(
+                                title = "Location permission",
+                                onClick = onRequestLocationPermission,
+                                flat = true
+                            )
+                        }
                     }
 
                     Spacer(Modifier.height(layout.bottomContentPadDp.dp))
@@ -255,13 +440,27 @@ fun SetupScreen(
                     uiState is SetupUiState.GeneratingRoute
                 val isRefining = uiState is SetupUiState.RefiningRoute
                 Surface(
-                    color = MaterialTheme.colorScheme.background,
-                    modifier = Modifier.navigationBarsPadding()
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 2.dp,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .navigationBarsPadding()
+                            .padding(
+                                horizontal = OrienteerSpacing.screenHorizontal,
+                                vertical = OrienteerSpacing.sm
+                            )
+                    ) {
                         if (isRefining) {
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                            Spacer(Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(OrienteerCardShape),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                            )
+                            Spacer(Modifier.height(OrienteerSpacing.xs))
                             Text(
                                 text = "Refining walking path…",
                                 style = MaterialTheme.typography.labelMedium,
@@ -269,21 +468,67 @@ fun SetupScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 textAlign = TextAlign.Center
                             )
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(OrienteerSpacing.xs))
                         }
-                        PrimaryGreenButton(
-                            text = when (uiState) {
-                                is SetupUiState.LocatingGps -> "Getting GPS fix…"
-                                is SetupUiState.GeneratingRoute -> "Generating route…"
-                                is SetupUiState.RefiningRoute -> "Refining route…"
-                                else -> "Generate Route"
-                            },
-                            onClick = { viewModel.generateRoute() },
-                            enabled = !isLoading && !isRefining,
-                            loading = isLoading,
-                            leadingIcon = if (!isLoading && !isRefining) Icons.Default.MyLocation else null,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        if (isOneWay || endpointsSummary.contains("Custom start")) {
+                            Text(
+                                text = endpointsSummary,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = OrienteerSpacing.xxs),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(OrienteerSpacing.xs),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            PrimaryGreenButton(
+                                text = when (uiState) {
+                                    is SetupUiState.LocatingGps -> "GPS…"
+                                    is SetupUiState.GeneratingRoute -> "Generating…"
+                                    is SetupUiState.RefiningRoute -> "Refining…"
+                                    else -> "Generate"
+                                },
+                                onClick = onGenerate,
+                                enabled = !isLoading && !isRefining,
+                                loading = isLoading,
+                                leadingIcon = if (!isLoading && !isRefining) OrienteerIcons.MyLocation else null,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Surface(
+                                onClick = onOpenEndpointPicker,
+                                enabled = !isLoading && !isRefining,
+                                shape = OrienteerCardShape,
+                                color = if (isOneWay || endpointsSummary.contains("Custom start")) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainerHigh
+                                },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                    Icon(
+                                        imageVector = OrienteerIcons.Flag,
+                                        contentDescription = if (isOneWay) "Start and finish" else "Set start / finish",
+                                        modifier = Modifier.size(22.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            if (isOneWay || endpointsSummary.contains("Custom start")) {
+                                TextButton(
+                                    onClick = onClearEndpoints,
+                                    enabled = !isLoading && !isRefining,
+                                    modifier = Modifier.height(48.dp)
+                                ) {
+                                    Text("Reset", style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -296,9 +541,10 @@ fun SetupScreen(
             ) {
                 if (uiState is SetupUiState.Error) {
                     Snackbar(
-                        modifier = Modifier.padding(16.dp),
+                        modifier = Modifier.padding(OrienteerSpacing.md),
+                        shape = OrienteerCardShape,
                         action = {
-                            TextButton(onClick = { viewModel.dismissError() }) {
+                            TextButton(onClick = onDismissError) {
                                 Text("Dismiss")
                             }
                         }
@@ -312,18 +558,37 @@ fun SetupScreen(
 }
 
 @Composable
-private fun InfoChip(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String) {
+private fun InfoChip(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    val shape = OrienteerInnerShape(OrienteerRadius.card, OrienteerSpacing.sm)
     Surface(
-        shape = RoundedCornerShape(8.dp),
+        modifier = modifier,
+        shape = shape,
         color = MaterialTheme.colorScheme.surfaceContainerHigh
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(
+                horizontal = OrienteerSpacing.sm,
+                vertical = OrienteerSpacing.xs
+            ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-            Text(label, style = MaterialTheme.typography.labelMedium)
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1
+            )
         }
     }
 }
@@ -333,3 +598,27 @@ private fun estimateCheckpoints(distanceKm: Double): Int =
 
 private fun estimateTime(distanceKm: Double): Int =
     (distanceKm * 6).toInt()
+
+@Preview(showBackground = true, name = "Setup — alpine light")
+@Composable
+private fun SetupScreenPreview() {
+    OrienteerTheme(themeMode = ThemeMode.LIGHT) {
+        SetupScreenContent(
+            uiState = SetupUiState.Idle,
+            distanceKm = 5.0,
+            latestRouteId = "preview",
+            customDistanceActive = false,
+            customDistanceText = "",
+            hasLocationPermission = true,
+            onCustomDistanceActiveChange = {},
+            onCustomDistanceTextChange = {},
+            onSetDistance = {},
+            onGenerate = {},
+            onDismissError = {},
+            onViewPreviousRoute = {},
+            onOpenHistory = {},
+            onOpenSettings = {},
+            onRequestLocationPermission = {}
+        )
+    }
+}

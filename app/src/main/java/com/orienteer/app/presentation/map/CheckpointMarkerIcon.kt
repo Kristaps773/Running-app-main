@@ -33,14 +33,16 @@ object CheckpointMarkerIcon {
         label: String,
         isStart: Boolean,
         primaryColor: Int,
-        startColor: Int
+        startColor: Int,
+        scale: Float = 1f
     ): Drawable {
         val density = context.resources.displayMetrics.density
-        val sizePx = (CIRCLE_DP * density).toInt()
-        val strokePx = (STROKE_DP * density).coerceAtLeast(2f)
+        val s = scale.coerceIn(0.25f, 1.5f)
+        val sizePx = (CIRCLE_DP * density * s).toInt().coerceAtLeast(8)
+        val strokePx = (STROKE_DP * density * s).coerceAtLeast(1.5f)
         val textSizePx = TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_SP,
-            if (isStart) START_TEXT_SIZE_SP else TEXT_SIZE_SP,
+            (if (isStart) START_TEXT_SIZE_SP else TEXT_SIZE_SP) * s,
             context.resources.displayMetrics
         )
 
