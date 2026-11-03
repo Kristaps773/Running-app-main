@@ -199,6 +199,23 @@ class RoutePdfLegendTest {
     }
 
     @Test
+    fun safeZoomBorder_keepsUsableViewportPositive_whenCropChromeIsHuge() {
+        val mapW = 1080
+        val mapH = 2200
+        // Short PDF map band (legends on) → wide aspect → large vertical crop.
+        val pdfAspect = 523f / 280f
+        val (vw, vh) = PdfPageLayout.pdfViewportSizePx(mapW, mapH, pdfAspect)
+        val cropChromePad = 64 + maxOf((mapW - vw) / 2, (mapH - vh) / 2)
+        // Regression: treating crop chrome as zoom border vs full map ANRs (ORIENTEERRUN-J).
+        assertTrue(mapW - 2 * cropChromePad <= 0)
+
+        val pad = PdfPageLayout.safeZoomBorderPx(vw, vh, 64)
+        assertTrue(vw - 2 * pad >= 2)
+        assertTrue(vh - 2 * pad >= 2)
+        assertTrue(pad in 0..64)
+    }
+
+    @Test
     fun pageLayout_withLegends_reservesBottomBand() {
         val without = PdfPageLayout.compute(includeLegends = false, legendLineCount = 0)
         val with = PdfPageLayout.compute(includeLegends = true, legendLineCount = 5)

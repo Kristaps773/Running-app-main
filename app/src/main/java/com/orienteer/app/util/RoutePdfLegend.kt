@@ -302,6 +302,18 @@ object PdfPageLayout {
             w to vh
         }
     }
+
+    /**
+     * Border for [org.osmdroid.views.MapView.zoomToBoundingBox] against a [vw]×[vh]
+     * viewport. Must keep (vw − 2·pad) and (vh − 2·pad) positive — oversized pad
+     * hangs forever inside Projection.getCloserPixel (ORIENTEERRUN-J).
+     */
+    fun safeZoomBorderPx(viewportW: Int, viewportH: Int, requestedPadPx: Int): Int {
+        val vw = viewportW.coerceAtLeast(1)
+        val vh = viewportH.coerceAtLeast(1)
+        val maxPad = (minOf(vw, vh) / 2 - 1).coerceAtLeast(0)
+        return requestedPadPx.coerceIn(0, maxPad)
+    }
 }
 
 object PdfMapScaleBar {

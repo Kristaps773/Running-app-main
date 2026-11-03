@@ -131,73 +131,96 @@ object RoutePdfExporter {
                 markerScale = printMarkerScale
             )
             liveMap.detachLocationMarker()
-            applyExportCamera(liveMap, box, exportScale, frameMm)
+            try {
+                applyExportCamera(liveMap, box, exportScale, frameMm)
+            } catch (_: Exception) {
+                // Keep export going with the current camera rather than crashing.
+            }
             liveMap.invalidate()
             liveMap.postDelayed({ liveMap.invalidate() }, 400L)
             liveMap.postDelayed({
-                // Ensure print-sized badges + no GPS pin at capture time.
-                applyRouteMapOverlays(
-                    map = liveMap,
-                    route = route,
-                    prefs = pdfMapPrefs,
-                    mapColors = mapColors,
-                    primaryColorArgb = primaryColorArgb,
-                    startColorArgb = startColorArgb,
-                    basemapStyle = basemapStyle,
-                    markerScale = printMarkerScale
-                )
-                liveMap.detachLocationMarker()
-                liveMap.invalidate()
-                val w = liveMap.width.coerceAtLeast(100)
-                val h = liveMap.height.coerceAtLeast(100)
-                val bitmap = Bitmap.createBitmap(
-                    w * CAPTURE_SCALE,
-                    h * CAPTURE_SCALE,
-                    Bitmap.Config.ARGB_8888
-                )
-                val canvas = Canvas(bitmap)
-                canvas.drawColor(Color.WHITE)
-                canvas.save()
-                canvas.scale(CAPTURE_SCALE.toFloat(), CAPTURE_SCALE.toFloat())
-                liveMap.draw(canvas)
-                val pdfAspect = (frameMm.widthMm / frameMm.heightMm).toFloat()
-                val (viewportW, _) = PdfPageLayout.pdfViewportSizePx(w, h, pdfAspect)
-                drawScaleBarOnMap(
-                    canvas = canvas,
-                    map = liveMap,
-                    route = route,
-                    exportScale = exportScale,
-                    frameMm = frameMm,
-                    captureW = viewportW
-                )
-                canvas.restore()
+                try {
+                    // Ensure print-sized badges + no GPS pin at capture time.
+                    applyRouteMapOverlays(
+                        map = liveMap,
+                        route = route,
+                        prefs = pdfMapPrefs,
+                        mapColors = mapColors,
+                        primaryColorArgb = primaryColorArgb,
+                        startColorArgb = startColorArgb,
+                        basemapStyle = basemapStyle,
+                        markerScale = printMarkerScale
+                    )
+                    liveMap.detachLocationMarker()
+                    liveMap.invalidate()
+                    val w = liveMap.width.coerceAtLeast(100)
+                    val h = liveMap.height.coerceAtLeast(100)
+                    val bitmap = Bitmap.createBitmap(
+                        w * CAPTURE_SCALE,
+                        h * CAPTURE_SCALE,
+                        Bitmap.Config.ARGB_8888
+                    )
+                    val canvas = Canvas(bitmap)
+                    canvas.drawColor(Color.WHITE)
+                    canvas.save()
+                    canvas.scale(CAPTURE_SCALE.toFloat(), CAPTURE_SCALE.toFloat())
+                    liveMap.draw(canvas)
+                    val pdfAspect = (frameMm.widthMm / frameMm.heightMm).toFloat()
+                    val (viewportW, _) = PdfPageLayout.pdfViewportSizePx(w, h, pdfAspect)
+                    drawScaleBarOnMap(
+                        canvas = canvas,
+                        map = liveMap,
+                        route = route,
+                        exportScale = exportScale,
+                        frameMm = frameMm,
+                        captureW = viewportW
+                    )
+                    canvas.restore()
 
-                // Restore interactive preview overlays (Compose will refresh location marker).
-                applyRouteMapOverlays(
-                    map = liveMap,
-                    route = route,
-                    prefs = mapPrefs,
-                    mapColors = mapColors,
-                    primaryColorArgb = primaryColorArgb,
-                    startColorArgb = startColorArgb,
-                    basemapStyle = basemapStyle,
-                    markerScale = 1f
-                )
-                liveMap.controller.setZoom(savedZoom)
-                liveMap.controller.setCenter(savedCenter)
-                liveMap.invalidate()
+                    // Restore interactive preview overlays (Compose will refresh location marker).
+                    applyRouteMapOverlays(
+                        map = liveMap,
+                        route = route,
+                        prefs = mapPrefs,
+                        mapColors = mapColors,
+                        primaryColorArgb = primaryColorArgb,
+                        startColorArgb = startColorArgb,
+                        basemapStyle = basemapStyle,
+                        markerScale = 1f
+                    )
+                    liveMap.controller.setZoom(savedZoom)
+                    liveMap.controller.setCenter(savedCenter)
+                    liveMap.invalidate()
 
-                val file = writePdf(
-                    context = context,
-                    bitmap = bitmap,
-                    route = route,
-                    layout = layout,
-                    controlSheet = if (includePdfLegends) controlSheet else null,
-                    exportScale = exportScale
-                )
-                bitmap.recycle()
-                file?.let { openPdf(context, it) }
-                onComplete(file)
+                    val file = writePdf(
+                        context = context,
+                        bitmap = bitmap,
+                        route = route,
+                        layout = layout,
+                        controlSheet = if (includePdfLegends) controlSheet else null,
+                        exportScale = exportScale
+                    )
+                    bitmap.recycle()
+                    file?.let { openPdf(context, it) }
+                    onComplete(file)
+                } catch (_: Exception) {
+                    runCatching {
+                        applyRouteMapOverlays(
+                            map = liveMap,
+                            route = route,
+                            prefs = mapPrefs,
+                            mapColors = mapColors,
+                            primaryColorArgb = primaryColorArgb,
+                            startColorArgb = startColorArgb,
+                            basemapStyle = basemapStyle,
+                            markerScale = 1f
+                        )
+                        liveMap.controller.setZoom(savedZoom)
+                        liveMap.controller.setCenter(savedCenter)
+                        liveMap.invalidate()
+                    }
+                    onComplete(null)
+                }
             }, EXPORT_CAPTURE_DELAY_MS)
         }
     }
@@ -255,8 +278,11 @@ object RoutePdfExporter {
     }
 
     /**
-     * Fit [box] so it remains inside the PDF center-crop ([vw]×[vh]), using osmdroid's
-     * zoomToBoundingBox with extra padding for the cropped phone chrome.
+     * Fit [box] inside the PDF center-crop ([vw]×[vh]).
+     *
+     * Uses the viewport-sized [MapView.zoomToBoundingBox] overload. Do **not** pass the
+     * phone-crop chrome as borderSize against the full MapView — that makes
+     * (width − 2·pad) ≤ 0 and ANRs inside Projection.getCloserPixel (ORIENTEERRUN-J).
      */
     private fun zoomToPdfViewport(
         map: MapView,
@@ -265,10 +291,25 @@ object RoutePdfExporter {
         vh: Int,
         maxZoom: Double
     ) {
-        val extraPadX = ((map.width - vw).coerceAtLeast(0)) / 2
-        val extraPadY = ((map.height - vh).coerceAtLeast(0)) / 2
-        val pad = EXPORT_FIT_PADDING_PX + maxOf(extraPadX, extraPadY)
-        map.zoomToBoundingBox(box, false, pad, maxZoom, null)
+        val safeW = vw.coerceAtLeast(1)
+        val safeH = vh.coerceAtLeast(1)
+        val pad = PdfPageLayout.safeZoomBorderPx(safeW, safeH, EXPORT_FIT_PADDING_PX)
+        try {
+            map.zoomToBoundingBox(box, /* animated = */ false, pad, safeW, safeH, maxZoom)
+        } catch (_: Exception) {
+            // Manual fallback if osmdroid rejects the box (degenerate span, etc.).
+            val centerLat = (box.latNorth + box.latSouth) / 2.0
+            val centerLon = (box.lonEast + box.lonWest) / 2.0
+            val spanLatM = ((box.latNorth - box.latSouth) * 111_320.0).coerceAtLeast(50.0)
+            val cosLat = kotlin.math.cos(Math.toRadians(centerLat)).coerceAtLeast(1e-6)
+            val spanLonM = ((box.lonEast - box.lonWest) * 111_320.0 * cosLat).coerceAtLeast(50.0)
+            val usableW = (safeW - 2 * pad).coerceAtLeast(1)
+            val usableH = (safeH - 2 * pad).coerceAtLeast(1)
+            val mpp = maxOf(spanLonM / usableW, spanLatM / usableH)
+            val zoom = zoomForMetresPerPixel(centerLat, mpp).coerceAtMost(maxZoom)
+            map.controller.setZoom(zoom)
+            map.controller.setCenter(org.osmdroid.util.GeoPoint(centerLat, centerLon))
+        }
     }
 
     /** True when [box] lies inside the center [vw]×[vh] region of the map view. */

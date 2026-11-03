@@ -4,7 +4,15 @@ Play release history reconstructed from Cursor chats and AAB build dates.
 **Do not keep a stack of old `.aab` files as history** — use this file + git commits.
 Local Play upload copies live only under `store-assets/releases/` (gitignored); keep the latest AAB.
 
-Current app version in source: **1.3.19** (`versionCode` 24).
+Current app version in source: **1.3.21** (`versionCode` 26).
+
+## 1.3.21 (vc26) — 2026-11-03
+
+Fix PDF export hang/ANR when fitting the map to the page (safe zoom border; Sentry ORIENTEERRUN-J). New Play upload after version code 25 was already used.
+
+## 1.3.20 (vc25) — 2026-11-02
+
+New Play upload after version code 24 was already used on the internal track. Same app as 1.3.19 (separate start/finish, endpoint picker, active-run notification controls).
 
 ## 1.3.19 (vc24) — 2026-11-01
 
