@@ -280,9 +280,10 @@ object RoutePdfExporter {
     /**
      * Fit [box] inside the PDF center-crop ([vw]×[vh]).
      *
-     * Uses the viewport-sized [MapView.zoomToBoundingBox] overload. Do **not** pass the
-     * phone-crop chrome as borderSize against the full MapView — that makes
-     * (width − 2·pad) ≤ 0 and ANRs inside Projection.getCloserPixel (ORIENTEERRUN-J).
+     * osmdroid only exposes a single borderSize against the full MapView. Prefer
+     * chrome+inner pad, but [PdfPageLayout.safeZoomBorderPx] must keep
+     * (width − 2·pad) positive — oversized pad ANRs in Projection.getCloserPixel
+     * (ORIENTEERRUN-J).
      */
     private fun zoomToPdfViewport(
         map: MapView,
@@ -293,9 +294,16 @@ object RoutePdfExporter {
     ) {
         val safeW = vw.coerceAtLeast(1)
         val safeH = vh.coerceAtLeast(1)
-        val pad = PdfPageLayout.safeZoomBorderPx(safeW, safeH, EXPORT_FIT_PADDING_PX)
+        val mapW = map.width.coerceAtLeast(1)
+        val mapH = map.height.coerceAtLeast(1)
+        val cropChrome = maxOf((mapW - safeW) / 2, (mapH - safeH) / 2).coerceAtLeast(0)
+        val pad = PdfPageLayout.safeZoomBorderPx(
+            mapW,
+            mapH,
+            cropChrome + EXPORT_FIT_PADDING_PX
+        )
         try {
-            map.zoomToBoundingBox(box, /* animated = */ false, pad, safeW, safeH, maxZoom)
+            map.zoomToBoundingBox(box, /* animated = */ false, pad, maxZoom, /* animationSpeed = */ null)
         } catch (_: Exception) {
             // Manual fallback if osmdroid rejects the box (degenerate span, etc.).
             val centerLat = (box.latNorth + box.latSouth) / 2.0
@@ -303,8 +311,8 @@ object RoutePdfExporter {
             val spanLatM = ((box.latNorth - box.latSouth) * 111_320.0).coerceAtLeast(50.0)
             val cosLat = kotlin.math.cos(Math.toRadians(centerLat)).coerceAtLeast(1e-6)
             val spanLonM = ((box.lonEast - box.lonWest) * 111_320.0 * cosLat).coerceAtLeast(50.0)
-            val usableW = (safeW - 2 * pad).coerceAtLeast(1)
-            val usableH = (safeH - 2 * pad).coerceAtLeast(1)
+            val usableW = (safeW - 2 * EXPORT_FIT_PADDING_PX).coerceAtLeast(1)
+            val usableH = (safeH - 2 * EXPORT_FIT_PADDING_PX).coerceAtLeast(1)
             val mpp = maxOf(spanLonM / usableW, spanLatM / usableH)
             val zoom = zoomForMetresPerPixel(centerLat, mpp).coerceAtMost(maxZoom)
             map.controller.setZoom(zoom)
