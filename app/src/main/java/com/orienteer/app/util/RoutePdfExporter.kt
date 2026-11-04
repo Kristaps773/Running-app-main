@@ -167,7 +167,7 @@ object RoutePdfExporter {
                     liveMap.draw(canvas)
                     val pdfAspect = (frameMm.widthMm / frameMm.heightMm).toFloat()
                     val (viewportW, _) = PdfPageLayout.pdfViewportSizePx(w, h, pdfAspect)
-                    drawScaleBarOnMap(
+                    drawMapDecorations(
                         canvas = canvas,
                         map = liveMap,
                         route = route,
@@ -351,7 +351,8 @@ object RoutePdfExporter {
         return true
     }
 
-    private fun drawScaleBarOnMap(
+    /** Scale bar + north arrow overprinted on the captured map (view-pixel coords). */
+    private fun drawMapDecorations(
         canvas: Canvas,
         map: MapView,
         route: Route,
@@ -398,7 +399,7 @@ object RoutePdfExporter {
         val mapW = canvas.width.toFloat() / CAPTURE_SCALE
         val mapH = canvas.height.toFloat() / CAPTURE_SCALE
         // Canvas is scaled by CAPTURE_SCALE when this runs — use view-pixel sizes.
-        val corner = PdfMapScaleBar.pickCorner(
+        val scaleCorner = PdfMapScaleBar.pickCorner(
             mapWidth = mapW,
             mapHeight = mapH,
             barWidth = blockW,
@@ -407,13 +408,14 @@ object RoutePdfExporter {
             paddingPx = 12f
         )
         val rect = PdfMapScaleBar.rectForCorner(
-            corner,
+            scaleCorner,
             mapW,
             mapH,
             blockW,
             blockH,
             paddingPx = 12f
         )
+        val ink = Color.parseColor("#0F1A13")
         val bg = Paint().apply {
             isAntiAlias = true
             color = Color.argb(220, 255, 255, 255)
@@ -421,7 +423,7 @@ object RoutePdfExporter {
         }
         val border = Paint().apply {
             isAntiAlias = true
-            color = Color.parseColor("#0F1A13")
+            color = ink
             style = Paint.Style.STROKE
             strokeWidth = 1.5f
         }
@@ -431,7 +433,7 @@ object RoutePdfExporter {
 
         val ratioPaint = Paint().apply {
             isAntiAlias = true
-            color = Color.parseColor("#0F1A13")
+            color = ink
             textSize = ratioTextSize
             textAlign = Paint.Align.CENTER
             isFakeBoldText = true
@@ -474,6 +476,76 @@ object RoutePdfExporter {
         canvas.drawText("0", barLeft, barBottom + 4f + distTextSize, distPaint)
         distPaint.textAlign = Paint.Align.RIGHT
         canvas.drawText(bar.distanceLabel, barRight, barBottom + 4f + distTextSize, distPaint)
+
+        drawNorthArrowOnMap(
+            canvas = canvas,
+            mapW = mapW,
+            mapH = mapH,
+            controlPointsPx = controls,
+            avoidCorner = scaleCorner,
+            bg = bg,
+            border = border,
+            inkArgb = ink
+        )
+    }
+
+    /** OSM is north-up — arrow always points to the top of the PDF map. */
+    private fun drawNorthArrowOnMap(
+        canvas: Canvas,
+        mapW: Float,
+        mapH: Float,
+        controlPointsPx: List<Pair<Float, Float>>,
+        avoidCorner: PdfMapScaleBar.Corner,
+        bg: Paint,
+        border: Paint,
+        inkArgb: Int
+    ) {
+        val (nw, nh) = PdfNorthArrow.blockSizePx(minOf(mapW, mapH))
+        val corner = PdfNorthArrow.pickCorner(
+            mapWidth = mapW,
+            mapHeight = mapH,
+            width = nw,
+            height = nh,
+            controlPointsPx = controlPointsPx,
+            avoid = avoidCorner,
+            paddingPx = 12f
+        )
+        val rect = PdfMapScaleBar.rectForCorner(corner, mapW, mapH, nw, nh, paddingPx = 12f)
+        val box = android.graphics.RectF(rect.left, rect.top, rect.right, rect.bottom)
+        canvas.drawRoundRect(box, 4f, 4f, bg)
+        canvas.drawRoundRect(box, 4f, 4f, border)
+
+        val cx = rect.centerX()
+        val innerPad = nw * 0.14f
+        val tipY = rect.top + innerPad
+        val baseY = tipY + nh * 0.42f
+        val halfW = nw * 0.28f
+        val shaftTop = baseY - 1f
+        val shaftBottom = rect.bottom - innerPad - nh * 0.22f
+        val shaftHalf = nw * 0.06f
+
+        val fill = Paint().apply {
+            isAntiAlias = true
+            color = inkArgb
+            style = Paint.Style.FILL
+        }
+        val head = android.graphics.Path().apply {
+            moveTo(cx, tipY)
+            lineTo(cx + halfW, baseY)
+            lineTo(cx - halfW, baseY)
+            close()
+        }
+        canvas.drawPath(head, fill)
+        canvas.drawRect(cx - shaftHalf, shaftTop, cx + shaftHalf, shaftBottom, fill)
+
+        val nPaint = Paint().apply {
+            isAntiAlias = true
+            color = inkArgb
+            textSize = nh * 0.22f
+            textAlign = Paint.Align.CENTER
+            isFakeBoldText = true
+        }
+        canvas.drawText("N", cx, rect.bottom - innerPad * 0.35f, nPaint)
     }
 
     private fun routePoints(route: Route): List<GeoPoint> {

@@ -38,8 +38,8 @@ android {
         applicationId = "com.orienteer.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 26
-        versionName = "1.3.21"
+        versionCode = 29
+        versionName = "1.3.24"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

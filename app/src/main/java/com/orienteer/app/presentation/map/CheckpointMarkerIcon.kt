@@ -27,6 +27,7 @@ object CheckpointMarkerIcon {
      * @param isStart true for start/finish checkpoint
      * @param primaryColor ARGB fill for numbered checkpoints
      * @param startColor ARGB fill for start/finish (e.g. tertiary)
+     * @param selected soft outer ring for picker selection
      */
     fun create(
         context: android.content.Context,
@@ -34,11 +35,13 @@ object CheckpointMarkerIcon {
         isStart: Boolean,
         primaryColor: Int,
         startColor: Int,
-        scale: Float = 1f
+        scale: Float = 1f,
+        selected: Boolean = false
     ): Drawable {
         val density = context.resources.displayMetrics.density
         val s = scale.coerceIn(0.25f, 1.5f)
-        val sizePx = (CIRCLE_DP * density * s).toInt().coerceAtLeast(8)
+        val padDp = if (selected) 5f else 0f
+        val sizePx = ((CIRCLE_DP + padDp * 2f) * density * s).toInt().coerceAtLeast(8)
         val strokePx = (STROKE_DP * density * s).coerceAtLeast(1.5f)
         val textSizePx = TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_SP,
@@ -50,7 +53,23 @@ object CheckpointMarkerIcon {
         val canvas = Canvas(bitmap)
 
         val center = sizePx / 2f
-        val radius = center - strokePx
+        val padPx = padDp * density * s
+        val radius = center - strokePx - padPx
+
+        if (selected) {
+            val selectRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = (2.5f * density * s).coerceAtLeast(2f)
+                color = Color.WHITE
+            }
+            val selectHalo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = (4.5f * density * s).coerceAtLeast(3f)
+                color = Color.argb(90, Color.red(primaryColor), Color.green(primaryColor), Color.blue(primaryColor))
+            }
+            canvas.drawCircle(center, center, radius + padPx * 0.55f, selectHalo)
+            canvas.drawCircle(center, center, radius + padPx * 0.35f, selectRing)
+        }
 
         // Fill circle
         val fillPaint = Paint().apply {

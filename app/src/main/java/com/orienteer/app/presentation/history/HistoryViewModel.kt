@@ -115,6 +115,12 @@ class HistoryViewModel @Inject constructor(
         }
     }
 
+    /** Route for a history session (Run again / New from this run). */
+    suspend fun routeForSession(sessionId: Long): Route? {
+        val detail = runRepository.getRunDetail(sessionId) ?: return null
+        return routeRepository.getRoute(detail.summary.routeId)?.withFinishCheckpoint()
+    }
+
     /**
      * Persist edited **leg** durations (checkpoint → checkpoint). GPS track is not modified.
      * [legDurationMsToCheckpoint] maps destination checkpoint id → leg duration ms.

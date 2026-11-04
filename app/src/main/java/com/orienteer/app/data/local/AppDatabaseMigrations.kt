@@ -84,13 +84,51 @@ object AppDatabaseMigrations {
         }
     }
 
+    /**
+     * v4 → v5: optional course-reuse snapshot JSON on routes (History → New from this run).
+     */
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            if (!columnExists(db, "routes", "reuseSnapshotJson")) {
+                db.execSQL(
+                    "ALTER TABLE routes ADD COLUMN reuseSnapshotJson TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+    }
+
+    val MIGRATION_3_5 = object : Migration(3, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            MIGRATION_3_4.migrate(db)
+            MIGRATION_4_5.migrate(db)
+        }
+    }
+
+    val MIGRATION_2_5 = object : Migration(2, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            MIGRATION_2_4.migrate(db)
+            MIGRATION_4_5.migrate(db)
+        }
+    }
+
+    val MIGRATION_1_5 = object : Migration(1, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            MIGRATION_1_4.migrate(db)
+            MIGRATION_4_5.migrate(db)
+        }
+    }
+
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
         MIGRATION_2_3,
         MIGRATION_1_3,
         MIGRATION_3_4,
         MIGRATION_2_4,
-        MIGRATION_1_4
+        MIGRATION_1_4,
+        MIGRATION_4_5,
+        MIGRATION_3_5,
+        MIGRATION_2_5,
+        MIGRATION_1_5
     )
 
     private fun columnExists(db: SupportSQLiteDatabase, table: String, column: String): Boolean {

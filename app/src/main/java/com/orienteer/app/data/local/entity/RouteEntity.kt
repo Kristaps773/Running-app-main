@@ -18,7 +18,9 @@ data class RouteEntity(
     val totalDistanceM: Double,
     val actualPathDistanceM: Double = 0.0,
     val estimatedDurationS: Double,
-    val createdAt: Long
+    val createdAt: Long,
+    /** JSON [com.orienteer.app.domain.CourseReuseSnapshot]; empty when absent. */
+    val reuseSnapshotJson: String = ""
 )
 
 @Entity(tableName = "run_sessions")

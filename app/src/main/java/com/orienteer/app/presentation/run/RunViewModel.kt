@@ -12,11 +12,16 @@ import com.orienteer.app.data.local.ActiveRunStore
 import com.orienteer.app.data.local.BasemapStyle
 import com.orienteer.app.data.local.MapDisplayPreferences
 import com.orienteer.app.data.local.UserPreferencesStore
+import com.orienteer.app.data.model.GeoPoint
 import com.orienteer.app.data.model.Route
 import com.orienteer.app.data.model.RunSession
 import com.orienteer.app.data.repository.RouteRepository
+import com.orienteer.app.domain.RunPathLeadMode
+import com.orienteer.app.domain.RoutePolylineProgress
+import com.orienteer.app.domain.usecase.LiveFootpathGuidanceUseCase
 import com.orienteer.app.service.LocationTrackingService
 import com.orienteer.app.service.RunSessionStarter
+import com.orienteer.app.util.GeoUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -35,7 +40,10 @@ data class RunUiState(
     val isPaused: Boolean = false,
     val isFinished: Boolean = false,
     val shouldSaveRun: Boolean = true,
-    val error: String? = null
+    val error: String? = null,
+    /** Session-only live OSRM guidance (may soft-reroute); not written to PDF route. */
+    val liveGuidancePolyline: List<GeoPoint> = emptyList(),
+    val movementBearingDeg: Float = 0f
 )
 
 @HiltViewModel
@@ -44,6 +52,7 @@ class RunViewModel @Inject constructor(
     private val routeRepository: RouteRepository,
     private val activeRunStore: ActiveRunStore,
     private val userPreferencesStore: UserPreferencesStore,
+    private val liveFootpathGuidance: LiveFootpathGuidanceUseCase,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -58,6 +67,16 @@ class RunViewModel @Inject constructor(
             SharingStarted.WhileSubscribed(5_000),
             MapDisplayPreferences()
         )
+
+    private var lastRerouteAtMs: Long = 0L
+    private var lastBearingLocation: GeoPoint? = null
+    private var rerouteJob: Job? = null
+
+    companion object {
+        private const val REROUTE_COOLDOWN_MS = 35_000L
+        private const val OFF_PATH_TO_CHECK_M = 55.0
+        private const val MIN_BEARING_MOVE_M = 8.0
+    }
 
     fun cycleBasemapStyle() {
         viewModelScope.launch {
@@ -89,12 +108,18 @@ class RunViewModel @Inject constructor(
             sessionCollectJob?.cancel()
             sessionCollectJob = viewModelScope.launch {
                 svc.runSession.collect { session ->
-                    _uiState.value = _uiState.value.copy(
+                    val prev = _uiState.value
+                    val bearing = session?.trackedPoints?.lastOrNull()?.let { loc ->
+                        updateMovementBearing(loc) ?: prev.movementBearingDeg
+                    } ?: prev.movementBearingDeg
+                    _uiState.value = prev.copy(
                         session = session,
                         isRunning = session?.isActive == true,
                         isPaused = session?.isPaused == true,
-                        isFinished = session?.isActive == false && session?.finishedAt != null
+                        isFinished = session?.isActive == false && session?.finishedAt != null,
+                        movementBearingDeg = bearing
                     )
+                    maybeSoftReroute(session)
                 }
             }
         }
@@ -120,8 +145,51 @@ class RunViewModel @Inject constructor(
             val route = routeRepository.getRoute(routeId)
             _uiState.value = _uiState.value.copy(
                 route = route,
+                liveGuidancePolyline = route?.polylinePoints.orEmpty(),
                 error = if (route == null) "Route not found" else null
             )
+        }
+    }
+
+    private fun updateMovementBearing(location: GeoPoint): Float? {
+        val prev = lastBearingLocation
+        lastBearingLocation = location
+        if (prev == null) return null
+        if (GeoUtils.distanceMeters(prev, location) < MIN_BEARING_MOVE_M) return null
+        return GeoUtils.bearingDegrees(prev, location).toFloat()
+    }
+
+    private fun maybeSoftReroute(session: RunSession?) {
+        if (session == null || !session.isActive || session.isPaused) return
+        val prefs = mapDisplayPreferences.value
+        if (!RunPathLeadMode.isEnabled(prefs.showWalkingPathPolyline, prefs.showYouAreHereDuringRun)) {
+            return
+        }
+        val route = _uiState.value.route ?: return
+        val location = session.trackedPoints.lastOrNull() ?: return
+        val guidance = _uiState.value.liveGuidancePolyline.ifEmpty { route.polylinePoints }
+        if (guidance.size < 2) return
+
+        val progress = RoutePolylineProgress.project(guidance, location)
+        if (progress.distanceToPathM < OFF_PATH_TO_CHECK_M) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastRerouteAtMs < REROUTE_COOLDOWN_MS) return
+        if (rerouteJob?.isActive == true) return
+
+        val remaining = route.checkpoints.drop(session.currentCheckpointIdx)
+        if (remaining.isEmpty()) return
+
+        lastRerouteAtMs = now
+        rerouteJob = viewModelScope.launch {
+            val result = liveFootpathGuidance.maybeReroute(
+                currentLocation = location,
+                remainingCheckpoints = remaining,
+                currentGuidance = guidance
+            ) ?: return@launch
+            if (result.switched) {
+                _uiState.value = _uiState.value.copy(liveGuidancePolyline = result.polyline)
+            }
         }
     }
 

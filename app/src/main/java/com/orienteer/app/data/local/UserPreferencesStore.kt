@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.orienteer.app.data.backup.BackupSettingsSnapshot
@@ -44,7 +45,10 @@ data class RouteGenerationRatios(
 /** Used by route generation. */
 data class RouteGenerationPreferences(
     val maxPathToAirRatio: Float = 1.5f,
-    val airDistanceToleranceM: Float = UserPreferencesStore.DEFAULT_AIR_TOLERANCE_M
+    val airDistanceToleranceM: Float = UserPreferencesStore.DEFAULT_AIR_TOLERANCE_M,
+    /** Intermediate controls only (excludes start/finish). */
+    val minCheckpoints: Int = UserPreferencesStore.DEFAULT_MIN_CHECKPOINTS,
+    val maxCheckpoints: Int = UserPreferencesStore.DEFAULT_MAX_CHECKPOINTS
 )
 
 data class MapDisplayPreferences(
@@ -77,6 +81,8 @@ class UserPreferencesStore @Inject constructor(
     private val keyMaxPathToAir = floatPreferencesKey("max_path_to_air_ratio")
     private val keyAirToleranceM = floatPreferencesKey("air_distance_tolerance_m")
     private val keyMaxTotalLegacy = floatPreferencesKey("max_total_path_to_air_ratio")
+    private val keyMinCheckpoints = intPreferencesKey("min_checkpoints")
+    private val keyMaxCheckpoints = intPreferencesKey("max_checkpoints")
     private val keyShowAirLegs = booleanPreferencesKey("show_air_leg_lines")
     private val keyShowAirLabels = booleanPreferencesKey("show_air_leg_distance_labels")
     private val keyShowWalkingPath = booleanPreferencesKey("show_walking_path_polyline")
@@ -103,12 +109,18 @@ class UserPreferencesStore @Inject constructor(
     }.distinctUntilChanged()
 
     val routeGenerationPreferences: Flow<RouteGenerationPreferences> =
-        routeRatios.map { ratios ->
+        dataStore.data.map { p ->
+            val (lo, hi) = coerceCheckpointWindow(
+                p[keyMinCheckpoints] ?: DEFAULT_MIN_CHECKPOINTS,
+                p[keyMaxCheckpoints] ?: DEFAULT_MAX_CHECKPOINTS
+            )
             RouteGenerationPreferences(
-                maxPathToAirRatio = ratios.maxPathToAirRatio.toFloat()
+                maxPathToAirRatio = (p[keyMaxPathToAir] ?: p[keyMaxTotalLegacy] ?: DEFAULT_MAX_PATH_TO_AIR)
                     .coerceIn(MIN_RATIO.toFloat(), MAX_RATIO.toFloat()),
-                airDistanceToleranceM = ratios.airDistanceToleranceM.toFloat()
-                    .coerceIn(MIN_AIR_TOLERANCE_M.toFloat(), MAX_AIR_TOLERANCE_M.toFloat())
+                airDistanceToleranceM = (p[keyAirToleranceM] ?: DEFAULT_AIR_TOLERANCE_M)
+                    .coerceIn(MIN_AIR_TOLERANCE_M.toFloat(), MAX_AIR_TOLERANCE_M.toFloat()),
+                minCheckpoints = lo,
+                maxCheckpoints = hi
             )
         }.distinctUntilChanged()
 
@@ -152,6 +164,14 @@ class UserPreferencesStore @Inject constructor(
                 .coerceIn(MIN_RATIO.toFloat(), MAX_RATIO.toFloat())
             it[keyAirToleranceM] = preset.airDistanceToleranceM
                 .coerceIn(MIN_AIR_TOLERANCE_M.toFloat(), MAX_AIR_TOLERANCE_M.toFloat())
+        }
+    }
+
+    suspend fun setCheckpointWindow(min: Int, max: Int) {
+        val (lo, hi) = coerceCheckpointWindow(min, max)
+        dataStore.edit {
+            it[keyMinCheckpoints] = lo
+            it[keyMaxCheckpoints] = hi
         }
     }
 
@@ -268,5 +288,15 @@ class UserPreferencesStore @Inject constructor(
         const val DEFAULT_USE_IOF_COURSE_OVERPRINT = false
         const val DEFAULT_DARK_BASEMAP = false
         val DEFAULT_BASEMAP_STYLE: BasemapStyle = BasemapStyle.STANDARD
+        const val MIN_CHECKPOINTS = 2
+        const val MAX_CHECKPOINTS = 15
+        const val DEFAULT_MIN_CHECKPOINTS = 3
+        const val DEFAULT_MAX_CHECKPOINTS = 6
+
+        fun coerceCheckpointWindow(min: Int, max: Int): Pair<Int, Int> {
+            val lo = min.coerceIn(MIN_CHECKPOINTS, MAX_CHECKPOINTS)
+            val hi = max.coerceIn(MIN_CHECKPOINTS, MAX_CHECKPOINTS)
+            return if (lo <= hi) lo to hi else hi to lo
+        }
     }
 }

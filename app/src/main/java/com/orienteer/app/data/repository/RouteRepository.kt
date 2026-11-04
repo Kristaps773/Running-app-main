@@ -7,6 +7,7 @@ import com.orienteer.app.data.local.entity.RouteEntity
 import com.orienteer.app.data.model.Checkpoint
 import com.orienteer.app.data.model.GeoPoint
 import com.orienteer.app.data.model.Route
+import com.orienteer.app.domain.CourseReuseSnapshot
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
@@ -70,6 +71,9 @@ private fun RouteEntity.toDomain(gson: Gson): Route {
         polylineJson,
         Array<GeoPoint>::class.java
     ).toList()
+    val snapshot = reuseSnapshotJson.takeIf { it.isNotBlank() }?.let { json ->
+        runCatching { gson.fromJson(json, CourseReuseSnapshot::class.java) }.getOrNull()
+    }
     return Route(
         id = id,
         checkpoints = checkpoints,
@@ -78,7 +82,8 @@ private fun RouteEntity.toDomain(gson: Gson): Route {
         totalDistanceM = totalDistanceM,
         actualPathDistanceM = actualPathDistanceM,
         estimatedDurationS = estimatedDurationS,
-        createdAt = createdAt
+        createdAt = createdAt,
+        reuseSnapshot = snapshot
     )
 }
 
@@ -90,5 +95,6 @@ private fun Route.toEntity(gson: Gson) = RouteEntity(
     totalDistanceM = totalDistanceM,
     actualPathDistanceM = actualPathDistanceM,
     estimatedDurationS = estimatedDurationS,
-    createdAt = createdAt
+    createdAt = createdAt,
+    reuseSnapshotJson = reuseSnapshot?.let { gson.toJson(it) }.orEmpty()
 )

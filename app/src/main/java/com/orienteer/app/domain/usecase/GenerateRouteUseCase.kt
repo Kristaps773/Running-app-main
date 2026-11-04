@@ -16,6 +16,7 @@ import com.orienteer.app.data.model.OverpassElement
 import com.orienteer.app.data.model.OverpassResponse
 import com.orienteer.app.data.model.Route
 import com.orienteer.app.domain.CourseEndpoints
+import com.orienteer.app.domain.LockedCoursePoints
 import com.orienteer.app.util.CheckpointDescriptionGenerator
 import com.orienteer.app.util.GeoUtils
 import com.orienteer.app.util.PolylineSimplifier
@@ -42,7 +43,7 @@ import kotlinx.coroutines.withTimeout
  * Generates a randomised loop running route using straight-line (Haversine) distances only.
  *
  * Algorithm:
- * 1. Random checkpoint count n (e.g. 3–8). Compute n+1 random segment lengths
+ * 1. Pick intermediate checkpoint count n in the user min..max window. Compute n+1 segment lengths
  *    (start→1, 1→2, …, n→start) that sum to targetDistanceM.
  * 2. From the previous point, pick the next segment's target straight-line distance,
  *    place a point on that circle (random bearing), snap to nearest road via OSRM /nearest.
@@ -82,14 +83,13 @@ class GenerateRouteUseCase @Inject constructor(
         private const val ENRICH_AROUND_RADIUS_M = 130
         private const val ENRICH_MAX_ELEMENTS = 48
 
+        /** Nominal segment floor; actual floors shrink via [CheckpointCountPlanner.segmentMinFloorM]. */
         private const val SEGMENT_MIN_M = 200.0
         private const val SEGMENT_MAX_M = 2_000.0
-        private const val MIN_CHECKPOINTS = 2
-        /** Cap for public OSRM — too many waypoints → slow/fail /route. */
-        private const val MAX_CHECKPOINTS = 10
         /** Max OSRM snap distance from requested point to road (too tight → all candidates rejected). */
         private const val SNAP_MAX_DISTANCE_M = 1_200.0
         private const val SNAP_RETRIES = 4
+        /** Nominal spacing; actual floors shrink via [CheckpointCountPlanner.candidateSpacingFloorM]. */
         private const val CANDIDATE_MIN_SPACING_M = 120.0
         private const val FAST_ACCEPT_TOLERANCE_M = 500.0
         /** Floor / share of target for fast-accept (fixed 500 m is too loose on 1–3 km loops). */
@@ -177,6 +177,8 @@ class GenerateRouteUseCase @Inject constructor(
      * @param origin          Runner's starting GPS position.
      * @param targetDistanceM Desired total straight-line route distance in metres.
      * @param destination     When non-null, one-way course ending at this point (not return-to-start).
+     * @param lockedCheckpoints Intermediate pins that must be visited (classic spine; skips object-ring).
+     * @param lockedAnyOrder  When true, permute locked visit order each attempt.
      * @return                A [Result] wrapping the generated [Route]. All distances are straight-line.
      */
     suspend operator fun invoke(
@@ -184,10 +186,16 @@ class GenerateRouteUseCase @Inject constructor(
         targetDistanceM: Double,
         generationPrefs: RouteGenerationPreferences = RouteGenerationPreferences(),
         destination: GeoPoint? = null,
+        lockedCheckpoints: List<GeoPoint> = emptyList(),
+        lockedAnyOrder: Boolean = false,
         onRouteUpdate: (suspend (Route) -> Unit)? = null
     ): Result<Route> {
+        val locked = lockedCheckpoints.take(LockedCoursePoints.MAX_LOCKED_INTERMEDIATES)
+        val anyOrderForFloor = lockedAnyOrder && locked.size >= 2
         when (
-            val decision = CourseEndpoints.evaluateTargetDistance(targetDistanceM, origin, destination)
+            val decision = LockedCoursePoints.evaluateTargetDistance(
+                targetDistanceM, origin, destination, locked, anyOrder = anyOrderForFloor
+            )
         ) {
             is CourseEndpoints.TargetDistanceDecision.BelowMinimum ->
                 return Result.failure(
@@ -218,6 +226,14 @@ class GenerateRouteUseCase @Inject constructor(
                 UserPreferencesStore.MAX_AIR_TOLERANCE_M.toFloat()
             )
             .toDouble()
+        val (prefMin, prefMax) = UserPreferencesStore.coerceCheckpointWindow(
+            generationPrefs.minCheckpoints,
+            generationPrefs.maxCheckpoints
+        )
+        val minCheckpoints = LockedCoursePoints.effectiveMinIntermediates(locked.size, prefMin)
+            .coerceAtMost(CheckpointCountPlanner.MAX_CHECKPOINTS)
+        val maxCheckpoints = prefMax.coerceAtLeast(minCheckpoints)
+            .coerceAtMost(CheckpointCountPlanner.MAX_CHECKPOINTS)
         var lastFailure: Throwable? = null
         val attemptSummaries = mutableListOf<Map<String, Any?>>()
         repeat(MAX_GENERATION_ATTEMPTS) { attempt ->
@@ -230,6 +246,10 @@ class GenerateRouteUseCase @Inject constructor(
             attemptDiagnostics["target_distance_m"] = targetDistanceM.toInt()
             attemptDiagnostics["max_path_to_air_ratio"] = maxPathToAirRatio
             attemptDiagnostics["air_tolerance_m"] = airDistanceToleranceM.toInt()
+            attemptDiagnostics["min_checkpoints"] = minCheckpoints
+            attemptDiagnostics["max_checkpoints"] = maxCheckpoints
+            attemptDiagnostics["locked_checkpoints"] = locked.size
+            attemptDiagnostics["locked_any_order"] = lockedAnyOrder && locked.size >= 2
             attemptDiagnostics["attempt_timeout_ms"] = ATTEMPT_TIMEOUT_MS
             attemptDiagnostics["one_way"] = destination != null
             val result = try {
@@ -240,8 +260,12 @@ class GenerateRouteUseCase @Inject constructor(
                             targetDistanceM = targetDistanceM,
                             maxPathToAirRatio = maxPathToAirRatio,
                             airDistanceToleranceM = airDistanceToleranceM,
+                            minCheckpoints = minCheckpoints,
+                            maxCheckpoints = maxCheckpoints,
                             attemptIndex = attempt,
                             destination = destination,
+                            lockedCheckpoints = locked,
+                            lockedAnyOrder = lockedAnyOrder,
                             onRouteUpdate = onRouteUpdate
                         )
                     }
@@ -374,8 +398,12 @@ class GenerateRouteUseCase @Inject constructor(
         targetDistanceM: Double,
         maxPathToAirRatio: Double,
         airDistanceToleranceM: Double,
+        minCheckpoints: Int,
+        maxCheckpoints: Int,
         attemptIndex: Int,
         destination: GeoPoint? = null,
+        lockedCheckpoints: List<GeoPoint> = emptyList(),
+        lockedAnyOrder: Boolean = false,
         onRouteUpdate: (suspend (Route) -> Unit)? = null
     ): Route {
         require(targetDistanceM in 500.0..50_000.0) {
@@ -395,10 +423,44 @@ class GenerateRouteUseCase @Inject constructor(
                 origin.latitude.toBits().toLong() xor
                 (origin.longitude.toBits().toLong() shl 32) xor
                 (attemptIndex.toLong() shl 48) xor
-                (destination?.latitude?.toBits()?.toLong() ?: 0L)
+                (destination?.latitude?.toBits()?.toLong() ?: 0L) xor
+                (minCheckpoints.toLong() shl 8) xor
+                (maxCheckpoints.toLong() shl 16) xor
+                (lockedCheckpoints.size.toLong() shl 24)
         )
-        val n = computeRandomCheckpointCount(targetDistanceM, rng)
+        val n = CheckpointCountPlanner.pickCount(minCheckpoints, maxCheckpoints, rng)
+            .coerceAtLeast(lockedCheckpoints.size)
+        val avgLegM = CheckpointCountPlanner.averageLegMeters(targetDistanceM, n)
+        val segmentMinM = CheckpointCountPlanner.segmentMinFloorM(avgLegM)
+        val spacingM = CheckpointCountPlanner.candidateSpacingFloorM(avgLegM)
         attemptDiagnostics["checkpoint_count"] = n
+        attemptDiagnostics["avg_leg_m"] = avgLegM.toInt()
+        attemptDiagnostics["segment_min_m"] = segmentMinM.toInt()
+        attemptDiagnostics["spacing_m"] = spacingM.toInt()
+
+        // Locked stones force classic (loop or one-way) so user pins are never dropped.
+        if (lockedCheckpoints.isNotEmpty()) {
+            attemptDiagnostics["generator"] = if (destination != null) {
+                "classic_one_way_locked"
+            } else {
+                "classic_locked"
+            }
+            return generateClassicLockedRoute(
+                origin = origin,
+                destination = destination,
+                targetDistanceM = targetDistanceM,
+                n = n,
+                locked = lockedCheckpoints,
+                anyOrder = lockedAnyOrder,
+                rng = rng,
+                maxPathToAirRatio = maxPathToAirRatio,
+                airDistanceToleranceM = airDistanceToleranceM,
+                segmentMinM = segmentMinM,
+                spacingM = spacingM,
+                routeId = routeId,
+                emitRouteUpdate = emitRouteUpdate
+            )
+        }
 
         // One-way: classic open chain only (keeps return-to-start object-ring path unchanged).
         if (destination != null) {
@@ -411,6 +473,8 @@ class GenerateRouteUseCase @Inject constructor(
                 rng = rng,
                 maxPathToAirRatio = maxPathToAirRatio,
                 airDistanceToleranceM = airDistanceToleranceM,
+                segmentMinM = segmentMinM,
+                spacingM = spacingM,
                 routeId = routeId,
                 emitRouteUpdate = emitRouteUpdate
             )
@@ -422,7 +486,8 @@ class GenerateRouteUseCase @Inject constructor(
             Log.d(TAG, "Object-ring fallback: candidates=${candidates.size}, needed=$n")
             attemptDiagnostics["generator"] = "classic_sparse_pois"
             return generateClassicRoute(
-                origin, targetDistanceM, n, rng, maxPathToAirRatio, airDistanceToleranceM, routeId, emitRouteUpdate
+                origin, targetDistanceM, n, rng, maxPathToAirRatio, airDistanceToleranceM,
+                segmentMinM, spacingM, routeId, emitRouteUpdate
             )
         }
         return generateObjectRingRoute(
@@ -433,6 +498,8 @@ class GenerateRouteUseCase @Inject constructor(
             rng = rng,
             maxPathToAirRatio = maxPathToAirRatio,
             airDistanceToleranceM = airDistanceToleranceM,
+            segmentMinM = segmentMinM,
+            spacingM = spacingM,
             routeId = routeId,
             emitRouteUpdate = emitRouteUpdate
         )
@@ -450,6 +517,8 @@ class GenerateRouteUseCase @Inject constructor(
         rng: Random,
         maxPathToAirRatio: Double,
         airDistanceToleranceM: Double,
+        segmentMinM: Double,
+        spacingM: Double,
         routeId: String,
         emitRouteUpdate: suspend (Route) -> Unit
     ): Route {
@@ -496,7 +565,7 @@ class GenerateRouteUseCase @Inject constructor(
                 origin = origin,
                 slots = slots,
                 pool = rankedPool,
-                minSpacingM = CANDIDATE_MIN_SPACING_M
+                minSpacingM = spacingM
             )
             if (ranked == null || ranked.size < n) {
                 selectionNullCount++
@@ -614,7 +683,7 @@ class GenerateRouteUseCase @Inject constructor(
                     unused = unused,
                     targetAirM = targetDistanceM,
                     airMaxM = airMaxM,
-                    minSpacingM = CANDIDATE_MIN_SPACING_M,
+                    minSpacingM = spacingM,
                     rng = rng
                 )
                 if (swapped == null) break
@@ -674,7 +743,8 @@ class GenerateRouteUseCase @Inject constructor(
             Log.w(TAG, "Object-ring produced no route; classic fallback")
             attemptDiagnostics["fell_back_to_classic"] = true
             return generateClassicRoute(
-                origin, targetDistanceM, n, rng, maxPathToAirRatio, airDistanceToleranceM, routeId, emitRouteUpdate
+                origin, targetDistanceM, n, rng, maxPathToAirRatio, airDistanceToleranceM,
+                segmentMinM, spacingM, routeId, emitRouteUpdate
             )
         }
 
@@ -689,6 +759,242 @@ class GenerateRouteUseCase @Inject constructor(
     }
 
     /**
+     * Classic generator with user-locked intermediate pins. Autos fill remaining [n] slots
+     * between stones; [anyOrder] permutes stone visit order. Loop when [destination] is null.
+     */
+    private suspend fun generateClassicLockedRoute(
+        origin: GeoPoint,
+        destination: GeoPoint?,
+        targetDistanceM: Double,
+        n: Int,
+        locked: List<GeoPoint>,
+        anyOrder: Boolean,
+        rng: Random,
+        maxPathToAirRatio: Double,
+        airDistanceToleranceM: Double,
+        segmentMinM: Double,
+        spacingM: Double,
+        routeId: String,
+        emitRouteUpdate: suspend (Route) -> Unit
+    ): Route {
+        val end = destination ?: origin
+        var bestRoute: Route? = null
+        var bestRouteFallback: Route? = null
+        var bestError = Double.MAX_VALUE
+        var bestErrorFallback = Double.MAX_VALUE
+        var routeFetchAttempts = 0
+        var routeFetchSuccesses = 0
+        var ratioRejectCount = 0
+        var overTargetAirCount = 0
+        var pointGenNullCount = 0
+        val fastAcceptM = fastAcceptToleranceM(targetDistanceM)
+        val iterationLimit = if (targetDistanceM < SHORT_ROUTE_M) MAX_ITERATIONS_SHORT else MAX_ITERATIONS
+        attemptDiagnostics["iteration_limit"] = iterationLimit
+        attemptDiagnostics["fast_accept_tolerance_m"] = fastAcceptM.toInt()
+
+        val requiredN = n.coerceAtLeast(locked.size)
+        attemptDiagnostics["locked_required_n"] = requiredN
+        attemptDiagnostics["locked_fillers"] = (requiredN - locked.size).coerceAtLeast(0)
+
+        repeat(iterationLimit) {
+            val ordered = LockedCoursePoints.visitOrder(locked, anyOrder, rng)
+            val fillers = (requiredN - ordered.size).coerceAtLeast(0)
+            val perLeg = LockedCoursePoints.distributeFillers(ordered.size + 1, fillers, rng)
+            val anchors = listOf(origin) + ordered + listOf(end)
+            val legAir = (0 until anchors.lastIndex).map {
+                GeoUtils.distanceMeters(anchors[it], anchors[it + 1]).coerceAtLeast(1.0)
+            }
+            // Stretch budgets so autos absorb (target − direct locked hops), not proportional
+            // spine air (that left short locked courses stuck near spine length).
+            val legBudgets = LockedCoursePoints.fillerLegBudgetsM(legAir, perLeg, targetDistanceM)
+
+            val intermediates = mutableListOf<GeoPoint>()
+            val fixedFlags = mutableListOf<Boolean>()
+            var failed = false
+            for (leg in 0 until anchors.lastIndex) {
+                val legFrom = when {
+                    leg == 0 -> origin
+                    else -> ordered[leg - 1]
+                }
+                val toward = anchors[leg + 1]
+                val fCount = perLeg[leg]
+                if (fCount > 0) {
+                    val budget = legBudgets[leg].coerceAtLeast(fCount * segmentMinM)
+                    // All fCount lengths sum to the stretch budget for this leg (then append locked).
+                    val lengths = computeRandomSegmentLengths(fCount, budget, rng, segmentMinM)
+                    val generated = generatePointsSequentially(
+                        origin = legFrom,
+                        segmentLengths = lengths,
+                        targetDistanceM = budget,
+                        rng = rng,
+                        segmentMinM = segmentMinM,
+                        spacingM = spacingM,
+                        home = toward
+                    ) ?: placeGeometricFillers(legFrom, toward, fCount, budget, rng)
+                    if (generated == null || generated.size != fCount) {
+                        failed = true
+                        break
+                    }
+                    intermediates.addAll(generated)
+                    repeat(generated.size) { fixedFlags.add(false) }
+                }
+                if (leg < ordered.size) {
+                    intermediates.add(ordered[leg])
+                    fixedFlags.add(true)
+                }
+            }
+            if (failed) {
+                pointGenNullCount++
+                return@repeat
+            }
+            // Must keep every auto + locked slot (never silently drop to spine-only).
+            if (intermediates.size != requiredN) {
+                pointGenNullCount++
+                return@repeat
+            }
+
+            routeFetchAttempts++
+            val routed = if (destination != null) {
+                fetchRoutedOpen(origin, intermediates, destination)
+            } else {
+                fetchRoutedLoop(origin, intermediates)
+            } ?: return@repeat
+            routeFetchSuccesses++
+            val snapped = routed.checkpointPositions
+            // Preserve locked flags by index (OSRM snap keeps waypoint count).
+            val flags = if (fixedFlags.size == snapped.size) {
+                fixedFlags
+            } else {
+                List(snapped.size) { idx -> fixedFlags.getOrElse(idx) { false } }
+            }
+            val osrmResult = routed.osrmResult
+            val distancesFromPrev = if (destination != null) {
+                computeDistancesFromPrevOpen(origin, snapped, destination)
+            } else {
+                computeDistancesFromPrev(origin, snapped)
+            }
+            val totalStraightLineM = distancesFromPrev.sum()
+            val airMaxM = targetDistanceM + airDistanceToleranceM
+            // Ignore routes that collapsed waypoints or stayed on the short locked spine.
+            if (snapped.size != requiredN) {
+                pointGenNullCount++
+                return@repeat
+            }
+            val softError = abs(totalStraightLineM - targetDistanceM)
+            val underError = (targetDistanceM - totalStraightLineM).coerceAtLeast(0.0)
+            val ratioRejection = pathToAirRejection(
+                osrmResult, totalStraightLineM, maxPathToAirRatio
+            )
+            if (ratioRejection.rejected) ratioRejectCount++
+            // When we asked for fillers, reject severe undershoot as a "best" candidate.
+            val severeUndershoot =
+                fillers > 0 && totalStraightLineM < targetDistanceM * 0.55
+            if (!severeUndershoot && softError < bestErrorFallback) {
+                bestErrorFallback = softError
+                val fallback = buildCandidateRoute(
+                    routeId, origin, snapped, distancesFromPrev, targetDistanceM,
+                    totalStraightLineM, osrmResult, destination, flags
+                )
+                bestRouteFallback = fallback
+                emitRouteUpdate(fallback)
+            }
+            val overTargetAir = totalStraightLineM > airMaxM
+            if (overTargetAir) overTargetAirCount++
+            if (!severeUndershoot && !ratioRejection.rejected && !overTargetAir &&
+                softError < bestError
+            ) {
+                bestError = softError
+                val candidate = buildCandidateRoute(
+                    routeId, origin, snapped, distancesFromPrev, targetDistanceM,
+                    totalStraightLineM, osrmResult, destination, flags
+                )
+                bestRoute = candidate
+                emitRouteUpdate(candidate)
+            }
+            if (!severeUndershoot && underError <= fastAcceptM && !ratioRejection.rejected &&
+                (bestRoute != null || bestRouteFallback != null)
+            ) {
+                return finalizeRoute(
+                    resolveGeneratedRoute(
+                        bestRoute, bestRouteFallback, targetDistanceM, maxPathToAirRatio, airDistanceToleranceM
+                    )
+                )
+            }
+        }
+
+        attemptDiagnostics["route_fetch_attempts"] = routeFetchAttempts
+        attemptDiagnostics["route_fetch_successes"] = routeFetchSuccesses
+        attemptDiagnostics["ratio_reject_count"] = ratioRejectCount
+        attemptDiagnostics["over_target_air_count"] = overTargetAirCount
+        attemptDiagnostics["point_gen_null_count"] = pointGenNullCount
+        recordBestCandidateDiagnostics(bestRoute, bestRouteFallback, targetDistanceM)
+
+        selectAcceptableRoute(
+            bestRoute, bestRouteFallback, targetDistanceM, maxPathToAirRatio, airDistanceToleranceM
+        )?.let { return finalizeRoute(it) }
+
+        if (routeFetchAttempts > 0 && routeFetchSuccesses == 0) {
+            generationFail(messageForRoutingFailures())
+        }
+
+        pickBestRoutedCandidate(bestRoute, bestRouteFallback, targetDistanceM)?.let {
+            return finalizeRoute(it)
+        }
+
+        putQualityGateDiagnostics(
+            targetDistanceM, maxPathToAirRatio, airDistanceToleranceM, bestRoute, bestRouteFallback
+        )
+        generationFail(
+            routeRejectionFailureMessage(
+                targetDistanceM, maxPathToAirRatio, airDistanceToleranceM, bestRouteFallback ?: bestRoute
+            )
+        )
+    }
+
+    /**
+     * Fallback when OSRM-snap sequential placement fails: place [count] points on a
+     * detour arc from [from] toward [toward] whose legs roughly sum to [budgetM].
+     */
+    private fun placeGeometricFillers(
+        from: GeoPoint,
+        toward: GeoPoint,
+        count: Int,
+        budgetM: Double,
+        rng: Random
+    ): List<GeoPoint>? {
+        if (count <= 0) return emptyList()
+        val direct = GeoUtils.distanceMeters(from, toward).coerceAtLeast(1.0)
+        val baseBearing = GeoUtils.bearingDegrees(from, toward)
+        val side = if (rng.nextBoolean()) 1.0 else -1.0
+        val step = (budgetM / count).coerceAtLeast(CheckpointCountPlanner.ABSOLUTE_MIN_LEG_M)
+        val result = ArrayList<GeoPoint>(count)
+        var prev = from
+        for (i in 0 until count) {
+            val t = (i + 1).toDouble() / (count + 1)
+            // Progress along the chord, then push sideways so path length grows toward budget.
+            val along = GeoUtils.offsetPoint(from, direct * t, baseBearing)
+            val pushM = (step * 0.65 + rng.nextDouble() * step * 0.25)
+                .coerceIn(CheckpointCountPlanner.ABSOLUTE_MIN_LEG_M, SEGMENT_MAX_M)
+            val bearing = (baseBearing + side * (55.0 + rng.nextDouble() * 40.0) + 360.0) % 360.0
+            val candidate = GeoUtils.offsetPoint(along, pushM, bearing)
+            // Keep moving forward vs previous to avoid collapsing duplicates.
+            if (GeoUtils.distanceMeters(prev, candidate) < CheckpointCountPlanner.ABSOLUTE_MIN_SPACING_M) {
+                val nudged = GeoUtils.offsetPoint(
+                    prev,
+                    step,
+                    (baseBearing + side * 70.0 + 360.0) % 360.0
+                )
+                result.add(nudged)
+                prev = nudged
+            } else {
+                result.add(candidate)
+                prev = candidate
+            }
+        }
+        return result
+    }
+
+    /**
      * One-way classic generator: place n intermediate checkpoints, route
      * origin → CPs → destination. Closing bias aims at [destination], not origin.
      */
@@ -700,10 +1006,12 @@ class GenerateRouteUseCase @Inject constructor(
         rng: Random,
         maxPathToAirRatio: Double,
         airDistanceToleranceM: Double,
+        segmentMinM: Double,
+        spacingM: Double,
         routeId: String,
         emitRouteUpdate: suspend (Route) -> Unit
     ): Route {
-        var segmentLengths = computeRandomSegmentLengths(n + 1, targetDistanceM, rng)
+        var segmentLengths = computeRandomSegmentLengths(n + 1, targetDistanceM, rng, segmentMinM)
         var bestRoute: Route? = null
         var bestRouteFallback: Route? = null
         var bestError = Double.MAX_VALUE
@@ -724,6 +1032,8 @@ class GenerateRouteUseCase @Inject constructor(
                 segmentLengths = segmentLengths.take(n),
                 targetDistanceM = targetDistanceM,
                 rng = rng,
+                segmentMinM = segmentMinM,
+                spacingM = spacingM,
                 home = destination
             )
             if (rawPositions == null) {
@@ -825,11 +1135,13 @@ class GenerateRouteUseCase @Inject constructor(
         rng: Random,
         maxPathToAirRatio: Double,
         airDistanceToleranceM: Double,
+        segmentMinM: Double,
+        spacingM: Double,
         routeId: String,
         emitRouteUpdate: suspend (Route) -> Unit
     ): Route {
         attemptDiagnostics.putIfAbsent("generator", "classic")
-        var segmentLengths = computeRandomSegmentLengths(n + 1, targetDistanceM, rng)
+        var segmentLengths = computeRandomSegmentLengths(n + 1, targetDistanceM, rng, segmentMinM)
         var bestRoute: Route? = null
         var bestRouteFallback: Route? = null
         var bestError = Double.MAX_VALUE
@@ -845,7 +1157,9 @@ class GenerateRouteUseCase @Inject constructor(
         attemptDiagnostics["fast_accept_tolerance_m"] = fastAcceptM.toInt()
 
         repeat(iterationLimit) {
-            val rawPositions = generatePointsSequentially(origin, segmentLengths.take(n), targetDistanceM, rng)
+            val rawPositions = generatePointsSequentially(
+                origin, segmentLengths.take(n), targetDistanceM, rng, segmentMinM, spacingM
+            )
             if (rawPositions == null) {
                 pointGenNullCount++
                 return@repeat
@@ -997,7 +1311,8 @@ class GenerateRouteUseCase @Inject constructor(
         targetDistanceM: Double,
         totalStraightLineM: Double,
         osrmResult: OsrmRouteResponse?,
-        destination: GeoPoint? = null
+        destination: GeoPoint? = null,
+        fixedFlags: List<Boolean> = emptyList()
     ): Route {
         val (polyline, estimatedDurationS) = when {
             osrmResult != null && osrmResult.code == "Ok" && osrmResult.routeList().isNotEmpty() -> {
@@ -1027,7 +1342,8 @@ class GenerateRouteUseCase @Inject constructor(
             totalDistanceM = totalStraightLineM,
             actualPathDistanceM = actualPathM,
             estimatedDurationS = estimatedDurationS,
-            destination = destination
+            destination = destination,
+            fixedFlags = fixedFlags
         )
     }
 
@@ -1171,21 +1487,15 @@ class GenerateRouteUseCase @Inject constructor(
     private suspend fun finalizeRoute(route: Route): Route =
         if (OVERPASS_ENRICH_MISSING_LANDMARKS) enrichMissingLandmarksBatched(route) else route
 
-    private fun computeCheckpointCount(distanceM: Double): Int {
-        // ~1.5 km air per checkpoint; capped for public OSRM.
-        val approx = (distanceM / 1_500.0).roundToInt().coerceIn(MIN_CHECKPOINTS, MAX_CHECKPOINTS)
-        return approx
-    }
-
-    private fun computeRandomCheckpointCount(distanceM: Double, rng: Random): Int {
-        val base = computeCheckpointCount(distanceM)
-        val lo = maxOf(MIN_CHECKPOINTS, base - 1)
-        val hi = minOf(MAX_CHECKPOINTS, base + 1)
-        return rng.nextInt(lo, hi + 1)
-    }
-
-    private fun computeRandomSegmentLengths(n: Int, targetM: Double, rng: Random): List<Double> {
-        val raw = List(n) { SEGMENT_MIN_M + rng.nextDouble() * (SEGMENT_MAX_M - SEGMENT_MIN_M) }
+    private fun computeRandomSegmentLengths(
+        n: Int,
+        targetM: Double,
+        rng: Random,
+        segmentMinM: Double
+    ): List<Double> {
+        val lo = segmentMinM.coerceAtLeast(CheckpointCountPlanner.ABSOLUTE_MIN_LEG_M)
+        val hi = max(SEGMENT_MAX_M, lo + 1.0)
+        val raw = List(n) { lo + rng.nextDouble() * (hi - lo) }
         val sum = raw.sum()
         return raw.map { it * (targetM / sum) }
     }
@@ -1272,6 +1582,8 @@ class GenerateRouteUseCase @Inject constructor(
         segmentLengths: List<Double>,
         targetDistanceM: Double,
         rng: Random,
+        segmentMinM: Double,
+        spacingM: Double,
         home: GeoPoint = origin
     ): List<GeoPoint>? {
         val result = mutableListOf<GeoPoint>()
@@ -1283,6 +1595,7 @@ class GenerateRouteUseCase @Inject constructor(
         val turnSign = if (rng.nextBoolean()) 1.0 else -1.0
         val turnPerLeg = (360.0 / (n + 1).coerceAtLeast(3)) * turnSign
         var prevBearing = rng.nextDouble(0.0, 360.0)
+        val legFloor = (segmentMinM * 0.75).coerceAtLeast(CheckpointCountPlanner.ABSOLUTE_MIN_LEG_M)
 
         for ((index, segmentTargetM) in segmentLengths.withIndex()) {
             var placed: GeoPoint? = null
@@ -1299,7 +1612,7 @@ class GenerateRouteUseCase @Inject constructor(
                     rng = rng
                 )
                 val legM = (segmentTargetM * (1.0 + attempt * 0.08))
-                    .coerceIn(SEGMENT_MIN_M * 0.75, SEGMENT_MAX_M)
+                    .coerceIn(legFloor, SEGMENT_MAX_M)
                 val raw = GeoUtils.offsetPoint(prev, legM, bearing)
                 val distFromHome = GeoUtils.distanceMeters(home, raw)
                 if (shouldCloseLoop(spentM, targetDistanceM) &&
@@ -1311,10 +1624,10 @@ class GenerateRouteUseCase @Inject constructor(
                 // Must be on the road network — raw random lat/lon is why generation "never" found a path.
                 val snapped = snapOne(raw) ?: return@repeat
                 // Keep checkpoints separated so OSRM /route does not collapse legs.
-                if (result.any { GeoUtils.distanceMeters(it, snapped) < CANDIDATE_MIN_SPACING_M }) {
+                if (result.any { GeoUtils.distanceMeters(it, snapped) < spacingM }) {
                     return@repeat
                 }
-                if (GeoUtils.distanceMeters(prev, snapped) < CANDIDATE_MIN_SPACING_M * 0.5) {
+                if (GeoUtils.distanceMeters(prev, snapped) < spacingM * 0.5) {
                     return@repeat
                 }
                 placed = snapped
@@ -1559,7 +1872,8 @@ class GenerateRouteUseCase @Inject constructor(
         if (snapped == null) {
             lastOsrmCallLabel = "route"
             noteRoutingFailure(RoutingFailure.RoadSnap)
-            if (checkpointPositions.size <= 5) {
+            // Parallel re-snap for dense courses too (cap matches CheckpointCountPlanner.MAX).
+            if (checkpointPositions.size <= CheckpointCountPlanner.MAX_CHECKPOINTS) {
                 delay(OSRM_RETRY_BACKOFF_MS)
                 return fetchRoutedWithParallelSnap(origin, checkpointPositions, end)
             }
@@ -1773,7 +2087,8 @@ class GenerateRouteUseCase @Inject constructor(
         totalDistanceM: Double,
         actualPathDistanceM: Double,
         estimatedDurationS: Double,
-        destination: GeoPoint? = null
+        destination: GeoPoint? = null,
+        fixedFlags: List<Boolean> = emptyList()
     ): Route {
         val oneWay = destination != null
         val checkpoints = buildList {
@@ -1804,7 +2119,8 @@ class GenerateRouteUseCase @Inject constructor(
                         description = desc,
                         landmarkName = name,
                         landmarkType = tag,
-                        distanceFromPrev = distancesFromPrev[idx]
+                        distanceFromPrev = distancesFromPrev[idx],
+                        isFixed = fixedFlags.getOrElse(idx) { false }
                     )
                 )
             }

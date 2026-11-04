@@ -6,4 +6,6 @@
     <item name="map_tag_route_overlay_key" type="id" />
     <item name="map_tag_dark_basemap" type="id" />
     <item name="map_tag_basemap_style" type="id" />
+    <item name="map_tag_run_gesture_listener" type="id" />
+    <item name="map_tag_suppress_gesture" type="id" />
 </resources>

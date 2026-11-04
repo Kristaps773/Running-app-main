@@ -422,7 +422,7 @@ object PdfMapScaleBar {
     }
 
     /** Positive when point is outside rect (edge distance); negative when inside. */
-    private fun distanceOutsideRect(x: Float, y: Float, rect: PdfRect): Float {
+    internal fun distanceOutsideRect(x: Float, y: Float, rect: PdfRect): Float {
         val dx = when {
             x < rect.left -> rect.left - x
             x > rect.right -> x - rect.right
@@ -442,6 +442,39 @@ object PdfMapScaleBar {
             sqrt(dx * dx + dy * dy)
         } else {
             maxOf(dx, dy)
+        }
+    }
+}
+
+/**
+ * Classic orienteering-style north arrow for PDF map captures.
+ * OSM basemap is north-up, so the arrow always points toward the top of the page.
+ */
+object PdfNorthArrow {
+    /** Width × height of the decoration block in map-view pixels. */
+    fun blockSizePx(mapShortSidePx: Float): Pair<Float, Float> {
+        val w = (mapShortSidePx * 0.08f).coerceIn(32f, 48f)
+        return w to w * 1.35f
+    }
+
+    fun pickCorner(
+        mapWidth: Float,
+        mapHeight: Float,
+        width: Float,
+        height: Float,
+        controlPointsPx: List<Pair<Float, Float>>,
+        avoid: PdfMapScaleBar.Corner?,
+        paddingPx: Float = 12f
+    ): PdfMapScaleBar.Corner {
+        val options = PdfMapScaleBar.Corner.entries.filter { it != avoid }
+            .ifEmpty { PdfMapScaleBar.Corner.entries.toList() }
+        return options.maxBy { corner ->
+            val rect = PdfMapScaleBar.rectForCorner(
+                corner, mapWidth, mapHeight, width, height, paddingPx
+            )
+            controlPointsPx.minOfOrNull { (x, y) ->
+                PdfMapScaleBar.distanceOutsideRect(x, y, rect)
+            } ?: Float.MAX_VALUE
         }
     }
 }

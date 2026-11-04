@@ -16,6 +16,7 @@
     <string name="notification_title_paused">OrienteerRun — Paused</string>
     <string name="route_preview">Route Preview</string>
     <string name="active_run">Active Run</string>
+    <string name="run_recenter_map">Recenter</string>
     <string name="distance">Distance</string>
     <string name="time">Time</string>
     <string name="pace">Pace</string>

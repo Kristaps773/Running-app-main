@@ -1,6 +1,8 @@
 package com.orienteer.app.presentation.setup
 
+import android.graphics.DashPathEffect
 import android.view.View
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +15,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,7 +46,13 @@ import com.orienteer.app.R
 import com.orienteer.app.data.local.BasemapStyle
 import com.orienteer.app.data.model.GeoPoint
 import com.orienteer.app.domain.CourseEndpoints
+import com.orienteer.app.domain.CoursePointsCatalog
+import com.orienteer.app.domain.CoursePointsSet
+import com.orienteer.app.domain.LockedCoursePoints
 import com.orienteer.app.presentation.components.PrimaryGreenButton
+import com.orienteer.app.presentation.map.CheckpointMarkerIcon
+import com.orienteer.app.presentation.map.CourseEndpointMarkerIcon
+import com.orienteer.app.presentation.map.IOF_PURPLE_ARGB
 import com.orienteer.app.presentation.map.MapAttributionBar
 import com.orienteer.app.presentation.map.applyBasemapStyle
 import com.orienteer.app.ui.icons.OrienteerIcons
@@ -51,26 +61,46 @@ import com.orienteer.app.util.GeoUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.material3.AlertDialog
+import java.util.UUID
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.util.GeoPoint as OsmGeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Polyline
 
-private enum class ActivePin { Start, Finish }
+private enum class ActivePin { Start, Checkpoint, Finish }
 
 /**
- * Start/finish picker. Chrome sits above/below the map (not overlaid) so taps always hit buttons.
+ * Course points picker: Start, Finish, locked checkpoints, Any order.
+ * Chrome sits above/below the map so controls stay tappable.
  */
 @Composable
 fun EndpointPickerScreen(
     initialStart: GeoPoint?,
     initialFinish: GeoPoint?,
+    initialLocked: List<GeoPoint> = emptyList(),
+    initialAnyOrder: Boolean = false,
+    recentSets: List<CoursePointsSet> = emptyList(),
+    favoriteSets: List<CoursePointsSet> = emptyList(),
     basemapStyle: BasemapStyle,
+    /** Same setting as map preview — classic IOF purple vs filled app badges. */
+    useIofCourseOverprint: Boolean = false,
     resolveGps: suspend () -> GeoPoint?,
     onCycleBasemap: () -> Unit,
-    onConfirm: (start: GeoPoint?, finish: GeoPoint?) -> Unit,
+    onApplySavedSet: (CoursePointsSet) -> Unit = {},
+    onDeleteRecent: (String) -> Unit = {},
+    onDeleteFavorite: (String) -> Unit = {},
+    onSaveFavorite: suspend () -> List<CoursePointsSet>? = { null },
+    onReplaceFavorite: (removeId: String, set: CoursePointsSet) -> Unit = { _, _ -> },
+    onConfirm: (
+        start: GeoPoint?,
+        finish: GeoPoint?,
+        locked: List<GeoPoint>,
+        anyOrder: Boolean
+    ) -> Unit,
     onCancel: () -> Unit
 ) {
     val context = LocalContext.current
@@ -80,10 +110,22 @@ fun EndpointPickerScreen(
     var start by remember { mutableStateOf(initialStart) }
     var finish by remember { mutableStateOf(initialFinish) }
     var finishAtStart by remember { mutableStateOf(initialFinish == null) }
-    var activePin by remember { mutableStateOf(ActivePin.Finish) }
+    var locked by remember { mutableStateOf(initialLocked) }
+    // Default: Any order on. Respect an explicit saved false when reopening with 2+ pins.
+    var anyOrder by remember { mutableStateOf(initialAnyOrder) }
+    var selectedLockedIndex by remember { mutableStateOf<Int?>(null) }
+    var activePin by remember {
+        mutableStateOf(
+            if (initialStart != null) ActivePin.Checkpoint else ActivePin.Start
+        )
+    }
     val activePinLatest by rememberUpdatedState(activePin)
+    val lockedLatest by rememberUpdatedState(locked)
+    val selectedLockedLatest by rememberUpdatedState(selectedLockedIndex)
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
+    var replaceCandidates by remember { mutableStateOf<List<CoursePointsSet>?>(null) }
+    var pendingFavorite by remember { mutableStateOf<CoursePointsSet?>(null) }
 
     LaunchedEffect(Unit) {
         Configuration.getInstance().userAgentValue = context.packageName
@@ -94,6 +136,7 @@ fun EndpointPickerScreen(
                 start = gps
                 mapView?.controller?.setCenter(OsmGeoPoint(gps.latitude, gps.longitude))
                 status = null
+                activePin = ActivePin.Checkpoint
             } else {
                 status = "GPS unavailable — tap the map to set Start."
                 activePin = ActivePin.Start
@@ -108,13 +151,36 @@ fun EndpointPickerScreen(
     }
 
     fun refreshMarkers(map: MapView) {
-        map.overlays.removeAll { it is Marker }
+        val ctx = map.context
+        // Match map preview: IOF purple vs forest filled badges (Settings → Classic IOF).
+        val badgeColor = if (useIofCourseOverprint) {
+            IOF_PURPLE_ARGB
+        } else {
+            CourseEndpointMarkerIcon.APP_BADGE_ARGB
+        }
+        map.overlays.removeAll { it is Marker || it is Polyline }
         start?.let { s ->
+            val kind = if (finishAtStart) {
+                CourseEndpointMarkerIcon.Kind.Combined
+            } else {
+                CourseEndpointMarkerIcon.Kind.Start
+            }
             map.overlays.add(
                 Marker(map).apply {
                     position = OsmGeoPoint(s.latitude, s.longitude)
-                    title = "Start"
-                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                    title = if (finishAtStart) "Start / Finish" else "Start"
+                    setIcon(
+                        CourseEndpointMarkerIcon.create(
+                            context = ctx,
+                            kind = kind,
+                            useIofStyle = useIofCourseOverprint,
+                            selected = activePin == ActivePin.Start ||
+                                (finishAtStart && activePin == ActivePin.Finish)
+                        )
+                    )
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    infoWindow = null
+                    setOnMarkerClickListener { _, _ -> true }
                     relatedObject = "start"
                 }
             )
@@ -125,13 +191,80 @@ fun EndpointPickerScreen(
                     Marker(map).apply {
                         position = OsmGeoPoint(f.latitude, f.longitude)
                         title = "Finish"
-                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                        setIcon(
+                            CourseEndpointMarkerIcon.create(
+                                context = ctx,
+                                kind = CourseEndpointMarkerIcon.Kind.Finish,
+                                useIofStyle = useIofCourseOverprint,
+                                selected = activePin == ActivePin.Finish
+                            )
+                        )
+                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                        infoWindow = null
+                        setOnMarkerClickListener { _, _ -> true }
                         relatedObject = "finish"
                     }
                 )
             }
         }
+        locked.forEachIndexed { index, point ->
+            val selected = selectedLockedIndex == index
+            val label = if (anyOrder) "CP" else "${index + 1}"
+            map.overlays.add(
+                Marker(map).apply {
+                    position = OsmGeoPoint(point.latitude, point.longitude)
+                    title = if (anyOrder) "Checkpoint" else "Checkpoint ${index + 1}"
+                    setIcon(
+                        CheckpointMarkerIcon.create(
+                            context = ctx,
+                            label = label,
+                            isStart = false,
+                            primaryColor = badgeColor,
+                            startColor = badgeColor,
+                            scale = if (selected) 1.12f else 1f,
+                            selected = selected
+                        )
+                    )
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    infoWindow = null
+                    setOnMarkerClickListener { _, _ -> true }
+                    relatedObject = "locked:$index"
+                }
+            )
+        }
+        if (!anyOrder && locked.size >= 2 && start != null) {
+            val end = if (finishAtStart) start!! else finish
+            if (end != null) {
+                // Air-leg magenta — same as map straight-line legs.
+                val guide = Polyline(map).apply {
+                    outlinePaint.strokeWidth = 5f
+                    outlinePaint.color = IOF_PURPLE_ARGB
+                    outlinePaint.alpha = 180
+                    outlinePaint.pathEffect = DashPathEffect(floatArrayOf(28f, 18f), 0f)
+                    setPoints(
+                        buildList {
+                            add(OsmGeoPoint(start!!.latitude, start!!.longitude))
+                            locked.forEach { add(OsmGeoPoint(it.latitude, it.longitude)) }
+                            add(OsmGeoPoint(end.latitude, end.longitude))
+                        }
+                    )
+                }
+                map.overlays.add(0, guide)
+            }
+        }
         map.invalidate()
+    }
+
+    fun loadSet(set: CoursePointsSet) {
+        start = set.start
+        finish = set.finish
+        finishAtStart = set.finish == null
+        locked = set.locked
+        anyOrder = set.anyOrder
+        selectedLockedIndex = null
+        activePin = if (set.start != null) ActivePin.Checkpoint else ActivePin.Start
+        onApplySavedSet(set)
+        mapView?.let { refreshMarkers(it) }
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -149,14 +282,24 @@ fun EndpointPickerScreen(
         }
     }
 
-    val airLabel = remember(start, finish, finishAtStart) {
+    val statusLabel = remember(start, finish, finishAtStart, locked, anyOrder) {
         val s = start
         val f = finish
         when {
-            finishAtStart || f == null || s == null -> "Return to start"
+            s == null -> "Set Start"
+            locked.isEmpty() && (finishAtStart || f == null) -> "Return to start"
+            locked.isEmpty() && f != null ->
+                "Air to finish: ${GeoUtils.formatDistance(CourseEndpoints.minAirDistanceM(s, f))}"
+            anyOrder && locked.size >= 2 ->
+                "${locked.size} locked · any order each Generate"
             else -> {
-                val m = CourseEndpoints.minAirDistanceM(s, f)
-                "Air to finish: ${GeoUtils.formatDistance(m)}"
+                val air = LockedCoursePoints.minVisitAirM(
+                    s,
+                    if (finishAtStart) null else f,
+                    locked,
+                    anyOrder = false
+                )
+                "${locked.size} locked · in order · ${GeoUtils.formatDistance(air)} min"
             }
         }
     }
@@ -171,7 +314,12 @@ fun EndpointPickerScreen(
             modifier = Modifier.fillMaxWidth(),
             tonalElevation = 2.dp
         ) {
-            Column(modifier = Modifier.padding(horizontal = OrienteerSpacing.sm, vertical = OrienteerSpacing.xs)) {
+            Column(
+                modifier = Modifier.padding(
+                    horizontal = OrienteerSpacing.sm,
+                    vertical = OrienteerSpacing.xs
+                )
+            ) {
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -179,7 +327,7 @@ fun EndpointPickerScreen(
                 ) {
                     TextButton(onClick = onCancel) { Text("Cancel") }
                     Text(
-                        text = "Start / finish",
+                        text = "Course points",
                         style = MaterialTheme.typography.titleMedium
                     )
                     TextButton(onClick = onCycleBasemap) {
@@ -193,7 +341,9 @@ fun EndpointPickerScreen(
                     }
                 }
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -201,6 +351,15 @@ fun EndpointPickerScreen(
                         selected = activePin == ActivePin.Start,
                         onClick = { activePin = ActivePin.Start },
                         label = { Text("Start") }
+                    )
+                    FilterChip(
+                        selected = activePin == ActivePin.Checkpoint && selectedLockedIndex == null,
+                        onClick = {
+                            // Add mode: next map tap places a new locked CP (does not move the last one).
+                            activePin = ActivePin.Checkpoint
+                            selectedLockedIndex = null
+                        },
+                        label = { Text("Checkpoint") }
                     )
                     FilterChip(
                         selected = activePin == ActivePin.Finish && !finishAtStart,
@@ -228,7 +387,9 @@ fun EndpointPickerScreen(
                                 if (gps != null) {
                                     start = gps
                                     activePin = ActivePin.Start
-                                    mapView?.controller?.animateTo(OsmGeoPoint(gps.latitude, gps.longitude))
+                                    mapView?.controller?.animateTo(
+                                        OsmGeoPoint(gps.latitude, gps.longitude)
+                                    )
                                     mapView?.let { refreshMarkers(it) }
                                     status = null
                                 } else {
@@ -240,8 +401,125 @@ fun EndpointPickerScreen(
                         Icon(OrienteerIcons.MyLocation, contentDescription = "Use GPS for Start")
                     }
                 }
+                if (locked.size >= 2) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = anyOrder,
+                            onCheckedChange = {
+                                anyOrder = it
+                                mapView?.let { m -> refreshMarkers(m) }
+                            }
+                        )
+                        Text(
+                            text = "Any order",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = " — locked points may reshuffle each Generate",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (recentSets.isNotEmpty() || favoriteSets.isNotEmpty()) {
+                    Text(
+                        text = "Saved",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = OrienteerSpacing.xxs)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        favoriteSets.forEach { set ->
+                            FilterChip(
+                                selected = false,
+                                onClick = { loadSet(set) },
+                                label = {
+                                    Text(
+                                        "★ ${CoursePointsCatalog.autoLabel(set)}",
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            )
+                        }
+                        recentSets.forEach { set ->
+                            FilterChip(
+                                selected = false,
+                                onClick = { loadSet(set) },
+                                label = {
+                                    Text(
+                                        CoursePointsCatalog.autoLabel(set),
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+                if (locked.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        locked.forEachIndexed { index, _ ->
+                            FilterChip(
+                                selected = selectedLockedIndex == index,
+                                onClick = {
+                                    // Select to move; tap again to return to add mode.
+                                    selectedLockedIndex =
+                                        if (selectedLockedIndex == index) null else index
+                                    activePin = ActivePin.Checkpoint
+                                },
+                                label = {
+                                    Text(if (anyOrder) "CP" else "${index + 1}")
+                                },
+                                trailingIcon = {
+                                    TextButton(
+                                        onClick = {
+                                            locked = locked.toMutableList().also { it.removeAt(index) }
+                                            selectedLockedIndex = null
+                                            mapView?.let { refreshMarkers(it) }
+                                        },
+                                        modifier = Modifier.size(24.dp)
+                                    ) { Text("×") }
+                                }
+                            )
+                        }
+                        FilterChip(
+                            selected = activePin == ActivePin.Checkpoint && selectedLockedIndex == null,
+                            onClick = {
+                                activePin = ActivePin.Checkpoint
+                                selectedLockedIndex = null
+                            },
+                            label = { Text("+ Add") }
+                        )
+                    }
+                }
                 Text(
-                    text = airLabel,
+                    text = when {
+                        activePin == ActivePin.Checkpoint && selectedLockedIndex != null -> {
+                            val n = selectedLockedIndex!! + 1
+                            if (anyOrder) {
+                                "Tap map to move the selected checkpoint"
+                            } else {
+                                "Tap map to move checkpoint #$n"
+                            }
+                        }
+                        activePin == ActivePin.Checkpoint ->
+                            if (locked.isEmpty()) {
+                                "Tap map to place a locked checkpoint"
+                            } else {
+                                "Tap map to add another locked checkpoint"
+                            }
+                        else -> statusLabel
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -255,7 +533,6 @@ fun EndpointPickerScreen(
             }
         }
 
-        // Map only in the middle band — never under the chrome, so no hover/punch-through.
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
@@ -276,6 +553,25 @@ fun EndpointPickerScreen(
                                     ActivePin.Finish -> {
                                         finishAtStart = false
                                         finish = point
+                                    }
+                                    ActivePin.Checkpoint -> {
+                                        val idx = selectedLockedLatest
+                                        val list = lockedLatest.toMutableList()
+                                        if (idx != null && idx in list.indices) {
+                                            // Explicitly selected → move that pin, then return to add mode.
+                                            list[idx] = point
+                                            locked = list
+                                            selectedLockedIndex = null
+                                        } else if (list.size < LockedCoursePoints.MAX_LOCKED_INTERMEDIATES) {
+                                            // No selection → always append a new locked checkpoint.
+                                            list.add(point)
+                                            locked = list
+                                            selectedLockedIndex = null
+                                        } else {
+                                            status =
+                                                "At most ${LockedCoursePoints.MAX_LOCKED_INTERMEDIATES} locked checkpoints."
+                                            return true
+                                        }
                                     }
                                 }
                                 status = null
@@ -310,31 +606,120 @@ fun EndpointPickerScreen(
             tonalElevation = 4.dp
         ) {
             Column(modifier = Modifier.padding(OrienteerSpacing.sm)) {
-                PrimaryGreenButton(
-                    text = "Use these points",
-                    onClick = onClick@{
-                        val s = start
-                        if (s == null) {
-                            status = "Set a Start point (tap map or use GPS)."
-                            activePin = ActivePin.Start
-                            return@onClick
-                        }
-                        when {
-                            finishAtStart -> onConfirm(s, null)
-                            finish == null -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(OrienteerSpacing.xs),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    PrimaryGreenButton(
+                        text = "Use these points",
+                        onClick = onClick@{
+                            val s = start
+                            if (s == null) {
+                                status = "Set a Start point (tap map or use GPS)."
+                                activePin = ActivePin.Start
+                                return@onClick
+                            }
+                            val f = if (finishAtStart) null else finish
+                            if (!finishAtStart && f == null) {
                                 status = "Tap the map to place Finish, or choose Same place."
                                 activePin = ActivePin.Finish
+                                return@onClick
                             }
-                            CourseEndpoints.minAirDistanceM(s, finish!!) >
-                                CourseEndpoints.MAX_TARGET_M -> {
-                                status = "Start and finish are too far apart (over 50 km)."
+                            when (
+                                val decision = LockedCoursePoints.evaluateTargetDistance(
+                                    targetM = CourseEndpoints.MAX_TARGET_M,
+                                    origin = s,
+                                    finish = f,
+                                    locked = locked,
+                                    anyOrder = anyOrder && locked.size >= 2
+                                )
+                            ) {
+                                is CourseEndpoints.TargetDistanceDecision.EndpointsExceedMax -> {
+                                    status = "Points are too far apart (over 50 km spine)."
+                                    return@onClick
+                                }
+                                else -> Unit
                             }
-                            else -> onConfirm(s, finish)
+                            onConfirm(s, f, locked, anyOrder)
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = {
+                            val s = start
+                            if (s == null) {
+                                status = "Set Start before starring."
+                                return@IconButton
+                            }
+                            val set = CoursePointsSet(
+                                id = UUID.randomUUID().toString(),
+                                savedAtMs = System.currentTimeMillis(),
+                                start = s,
+                                finish = if (finishAtStart) null else finish,
+                                locked = locked,
+                                anyOrder = anyOrder,
+                                usedGpsStart = false
+                            )
+                            scope.launch {
+                                // Sync local draft into active before favorite write.
+                                onApplySavedSet(set)
+                                val full = onSaveFavorite()
+                                if (full != null) {
+                                    pendingFavorite = set
+                                    replaceCandidates = full
+                                    status = "Favorites full — pick one to replace."
+                                } else {
+                                    status = "Saved to favorites"
+                                }
+                            }
                         }
+                    ) {
+                        Icon(
+                            OrienteerIcons.Star,
+                            contentDescription = "Save to favorites"
+                        )
                     }
-                )
+                }
             }
         }
+    }
+
+    val candidates = replaceCandidates
+    val pending = pendingFavorite
+    if (candidates != null && pending != null) {
+        AlertDialog(
+            onDismissRequest = {
+                replaceCandidates = null
+                pendingFavorite = null
+            },
+            title = { Text("Favorites full") },
+            text = {
+                Column {
+                    Text("Replace an existing favorite with the current points:")
+                    candidates.forEach { set ->
+                        TextButton(
+                            onClick = {
+                                onReplaceFavorite(set.id, pending)
+                                replaceCandidates = null
+                                pendingFavorite = null
+                                status = "Favorite replaced"
+                            }
+                        ) {
+                            Text(CoursePointsCatalog.autoLabel(set))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        replaceCandidates = null
+                        pendingFavorite = null
+                    }
+                ) { Text("Cancel") }
+            }
+        )
     }
 }
 

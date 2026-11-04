@@ -52,7 +52,9 @@ fun MapView.reattachLocationMarker(marker: Marker?) {
 internal fun routeOverlayFingerprint(
     route: Route,
     prefs: MapDisplayPreferences,
-    basemapStyle: BasemapStyle = prefs.basemapStyle
+    basemapStyle: BasemapStyle = prefs.basemapStyle,
+    pathLeadBucket: Int? = null,
+    guidancePointCount: Int = 0
 ): String = buildString {
     append(route.id)
     append('|')
@@ -73,6 +75,10 @@ internal fun routeOverlayFingerprint(
     append(prefs.useIofCourseOverprint)
     append('|')
     append(basemapStyle.name)
+    append('|')
+    append(pathLeadBucket ?: -1)
+    append('|')
+    append(guidancePointCount)
 }
 
 /**
@@ -88,6 +94,12 @@ fun OsmMapHost(
     basemapStyle: BasemapStyle = BasemapStyle.STANDARD,
     interactive: Boolean = true,
     initialZoom: Double = 15.0,
+    /** When set, draw directional gradient on this polyline (active-run lead). PDF omits. */
+    pathLead: PathLeadDrawState? = null,
+    /** Heading-up follow while locked; ignored when null / free-look. */
+    followCamera: Boolean = false,
+    mapBearingDeg: Float = 0f,
+    onUserMapGesture: () -> Unit = {},
     onMapReady: (MapView) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -96,8 +108,32 @@ fun OsmMapHost(
     val mapColors = mapOverlayColors()
     val primaryArgb = MaterialTheme.colorScheme.primary.toArgb()
     val startArgb = MaterialTheme.colorScheme.tertiary.toArgb()
-    val overlayFingerprint = remember(route, mapPrefs, basemapStyle) {
-        routeOverlayFingerprint(route, mapPrefs, basemapStyle)
+    val gestureHolder = remember { object { var onGesture: () -> Unit = {} } }
+    gestureHolder.onGesture = onUserMapGesture
+    val pathLeadBucket = remember(pathLead?.progressLocation, pathLead?.guidancePolyline) {
+        val lead = pathLead ?: return@remember null
+        if (lead.guidancePolyline.size < 2) return@remember null
+        val loc = lead.progressLocation ?: lead.guidancePolyline.first()
+        val progress = com.orienteer.app.domain.RoutePolylineProgress.project(
+            lead.guidancePolyline,
+            loc
+        )
+        com.orienteer.app.domain.RoutePolylineProgress.progressBucket(progress.distanceAlongM)
+    }
+    val overlayFingerprint = remember(
+        route,
+        mapPrefs,
+        basemapStyle,
+        pathLeadBucket,
+        pathLead?.guidancePolyline?.size
+    ) {
+        routeOverlayFingerprint(
+            route,
+            mapPrefs,
+            basemapStyle,
+            pathLeadBucket = pathLeadBucket,
+            guidancePointCount = pathLead?.guidancePolyline?.size ?: 0
+        )
     }
 
     LaunchedEffect(Unit) {
@@ -137,6 +173,24 @@ fun OsmMapHost(
                     onResume()
                     mapView = this
                     onMapReady(this)
+                    if (getTag(R.id.map_tag_run_gesture_listener) == null) {
+                        addMapListener(object : org.osmdroid.events.MapListener {
+                            override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
+                                if (getTag(R.id.map_tag_suppress_gesture) != true) {
+                                    gestureHolder.onGesture()
+                                }
+                                return false
+                            }
+
+                            override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
+                                if (getTag(R.id.map_tag_suppress_gesture) != true) {
+                                    gestureHolder.onGesture()
+                                }
+                                return false
+                            }
+                        })
+                        setTag(R.id.map_tag_run_gesture_listener, true)
+                    }
                     post {
                         applyRouteMapOverlays(
                             map = this,
@@ -145,7 +199,8 @@ fun OsmMapHost(
                             mapColors = mapColors,
                             primaryColorArgb = primaryArgb,
                             startColorArgb = startArgb,
-                            basemapStyle = basemapStyle
+                            basemapStyle = basemapStyle,
+                            pathLead = pathLead
                         )
                         updateLocationMarker(this, currentLocation)
                     }
@@ -170,11 +225,21 @@ fun OsmMapHost(
                         mapColors = mapColors,
                         primaryColorArgb = primaryArgb,
                         startColorArgb = startArgb,
-                        basemapStyle = basemapStyle
+                        basemapStyle = basemapStyle,
+                        pathLead = pathLead
                     )
                 }
 
                 updateLocationMarker(view, currentLocation)
+
+                if (followCamera && currentLocation != null) {
+                    view.setTag(R.id.map_tag_suppress_gesture, true)
+                    view.controller.setCenter(
+                        OsmGeoPoint(currentLocation.latitude, currentLocation.longitude)
+                    )
+                    view.mapOrientation = mapBearingDeg
+                    view.post { view.setTag(R.id.map_tag_suppress_gesture, false) }
+                }
             }
         )
     }

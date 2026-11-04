@@ -11,7 +11,7 @@ import com.orienteer.app.data.local.entity.RunSessionEntity
 
 @Database(
     entities = [RouteEntity::class, RunSessionEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 @TypeConverters(RouteConverters::class)

@@ -1,5 +1,6 @@
 package com.orienteer.app.data.model
 
+import com.orienteer.app.domain.CourseReuseSnapshot
 import com.orienteer.app.util.GeoUtils
 
 /**
@@ -13,6 +14,7 @@ import com.orienteer.app.util.GeoUtils
  * @param actualPathDistanceM OSRM walking-path distance in metres (0 until refined).
  * @param estimatedDurationS  OSRM walking duration in seconds.
  * @param createdAt           Unix epoch millis.
+ * @param reuseSnapshot       Optional generate knobs for History → New from this run.
  */
 data class Route(
     val id: String,
@@ -22,7 +24,8 @@ data class Route(
     val totalDistanceM: Double,
     val actualPathDistanceM: Double = 0.0,
     val estimatedDurationS: Double,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val reuseSnapshot: CourseReuseSnapshot? = null
 ) {
     /** True when [polylinePoints] is provisional straight-line geometry awaiting OSRM refinement. */
     val isDraft: Boolean

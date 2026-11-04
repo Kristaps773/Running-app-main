@@ -1,6 +1,7 @@
 package com.orienteer.app.presentation.setup
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -10,28 +11,31 @@ class SetupLayoutMetricsTest {
     fun shortScreenUsesCompactSizes() {
         val metrics = setupLayoutMetrics(520f)
 
-        assertEquals(8f, metrics.topSpacerDp)
-        assertEquals(48f, metrics.iconSizeDp)
-        assertEquals(32f, metrics.distanceFontSp)
+        assertEquals(4f, metrics.topSpacerDp)
+        assertEquals(26f, metrics.distanceFontSp)
+        assertFalse(metrics.showTagline)
+        assertFalse(metrics.showEstimateStrip)
         assertTrue(metrics.bottomContentPadDp <= 8f)
     }
 
     @Test
-    fun mediumScreenUsesMidSizes() {
-        val metrics = setupLayoutMetrics(640f)
+    fun mediumScreenHidesEstimateToKeepSettingsVisible() {
+        val metrics = setupLayoutMetrics(700f)
 
-        assertEquals(16f, metrics.topSpacerDp)
-        assertEquals(64f, metrics.iconSizeDp)
-        assertEquals(38f, metrics.distanceFontSp)
+        assertEquals(6f, metrics.topSpacerDp)
+        assertEquals(30f, metrics.distanceFontSp)
+        assertFalse(metrics.showTagline)
+        assertFalse(metrics.showEstimateStrip)
     }
 
     @Test
     fun tallScreenUsesComfortableSizes() {
         val metrics = setupLayoutMetrics(800f)
 
-        assertEquals(32f, metrics.topSpacerDp)
-        assertEquals(80f, metrics.iconSizeDp)
-        assertEquals(44f, metrics.distanceFontSp)
+        assertEquals(10f, metrics.topSpacerDp)
+        assertEquals(34f, metrics.distanceFontSp)
+        assertTrue(metrics.showTagline)
+        assertTrue(metrics.showEstimateStrip)
     }
 
     @Test
@@ -40,8 +44,8 @@ class SetupLayoutMetricsTest {
         val tall = setupLayoutMetrics(800f)
 
         assertTrue(short.topSpacerDp <= tall.topSpacerDp)
-        assertTrue(short.iconSizeDp <= tall.iconSizeDp)
         assertTrue(short.distanceFontSp <= tall.distanceFontSp)
         assertTrue(short.sectionSpacerDp <= tall.sectionSpacerDp)
+        assertTrue(short.cardPaddingDp <= tall.cardPaddingDp)
     }
 }

@@ -74,7 +74,16 @@ fun AppNavigation(
     val hideActiveBanner = currentRoute.startsWith("run/") &&
         navBackStackEntry?.arguments?.getString("routeId") == activeRouteId
     val showActiveBanner = activeRouteId != null && !hideActiveBanner
-    val startDestination = if (startAtHistory) Screen.History.route else Screen.Setup.route
+    // Always start at Setup so SetupViewModel stays on the back stack for History reuse.
+    val startDestination = Screen.Setup.route
+
+    LaunchedEffect(startAtHistory) {
+        if (startAtHistory) {
+            navController.navigate(Screen.History.route) {
+                launchSingleTop = true
+            }
+        }
+    }
 
     LaunchedEffect(openActiveRunRouteId) {
         val routeId = openActiveRunRouteId ?: return@LaunchedEffect
@@ -118,15 +127,33 @@ fun AppNavigation(
                 }
                 val customStart by setupViewModel.customStart.collectAsStateWithLifecycle()
                 val customFinish by setupViewModel.customFinish.collectAsStateWithLifecycle()
+                val lockedCheckpoints by setupViewModel.lockedCheckpoints.collectAsStateWithLifecycle()
+                val lockedAnyOrder by setupViewModel.lockedAnyOrder.collectAsStateWithLifecycle()
                 val mapDisplay by setupViewModel.mapDisplayPreferences.collectAsStateWithLifecycle()
+                val recent by setupViewModel.recentCoursePoints.collectAsStateWithLifecycle()
+                val favorites by setupViewModel.favoriteCoursePoints.collectAsStateWithLifecycle()
                 EndpointPickerScreen(
                     initialStart = customStart,
                     initialFinish = customFinish,
+                    initialLocked = lockedCheckpoints,
+                    initialAnyOrder = lockedAnyOrder,
+                    recentSets = recent,
+                    favoriteSets = favorites,
                     basemapStyle = mapDisplay.basemapStyle,
+                    useIofCourseOverprint = mapDisplay.useIofCourseOverprint,
                     resolveGps = { setupViewModel.resolveGpsForPicker() },
                     onCycleBasemap = setupViewModel::cycleBasemapStyle,
-                    onConfirm = { start, finish ->
-                        setupViewModel.applyCourseEndpoints(start, finish)
+                    onApplySavedSet = { set ->
+                        setupViewModel.applyCoursePointsSet(set)
+                    },
+                    onDeleteRecent = setupViewModel::removeRecentCoursePoints,
+                    onDeleteFavorite = setupViewModel::removeFavoriteCoursePoints,
+                    onSaveFavorite = { setupViewModel.saveActiveToFavorites() },
+                    onReplaceFavorite = { removeId, set ->
+                        setupViewModel.replaceFavoriteCoursePoints(removeId, set)
+                    },
+                    onConfirm = { start, finish, locked, anyOrder ->
+                        setupViewModel.applyCoursePoints(start, finish, locked, anyOrder)
                         navController.popBackStack()
                     },
                     onCancel = { navController.popBackStack() }
@@ -194,10 +221,33 @@ fun AppNavigation(
             }
 
             composable(Screen.History.route) {
+                val setupEntry = remember(navController) {
+                    runCatching { navController.getBackStackEntry(Screen.Setup.route) }.getOrNull()
+                }
+                val setupViewModel: SetupViewModel? = setupEntry?.let { hiltViewModel(it) }
                 HistoryScreen(
                     onNavigateBack = { navController.popBackStack() },
                     onOpenRunDetail = { sessionId ->
                         navController.navigate(Screen.HistoryMap.createRoute(sessionId))
+                    },
+                    onRunAgain = { routeId ->
+                        navController.navigate(Screen.Map.createRoute(routeId))
+                    },
+                    onApplyReuse = { route, withPins ->
+                        setupViewModel?.applyReuseFromRoute(route, withPins)
+                    },
+                    onEditCheckpointsFromRoute = { route ->
+                        setupViewModel?.applyReuseFromRoute(route, withPins = true)
+                        navController.navigate(Screen.EndpointPicker.route)
+                    },
+                    onGoToSetup = {
+                        navController.navigate(Screen.Setup.route) {
+                            popUpTo(Screen.Setup.route) { inclusive = false }
+                            launchSingleTop = true
+                        }
+                    },
+                    onSaveRouteToFavorites = { route ->
+                        setupViewModel?.saveRoutePinsToFavorites(route)
                     }
                 )
             }

@@ -258,6 +258,16 @@ fun addCheckpointMarkers(
     }
 }
 
+/**
+ * Optional active-run path lead. When non-null and walking path is shown, draws a directional
+ * gradient on [guidancePolyline] (session live path) instead of the solid course polyline.
+ * PDF/preview callers omit this and keep the solid path.
+ */
+data class PathLeadDrawState(
+    val guidancePolyline: List<GeoPoint>,
+    val progressLocation: GeoPoint?
+)
+
 /** Draw route preview overlays: walking path, air legs, distance labels, checkpoint badges. */
 fun applyRouteMapOverlays(
     map: MapView,
@@ -267,15 +277,32 @@ fun applyRouteMapOverlays(
     primaryColorArgb: Int,
     startColorArgb: Int,
     basemapStyle: BasemapStyle = prefs.basemapStyle,
-    markerScale: Float = 1f
+    markerScale: Float = 1f,
+    pathLead: PathLeadDrawState? = null
 ) {
     clearRouteOverlays(map)
     val airColor = mapColors.airLeg.toArgb()
     val airHaloColor = mapColors.airLegHalo.toArgb()
     val useIof = prefs.useIofCourseOverprint
 
-    if (prefs.showWalkingPathPolyline && route.polylinePoints.isNotEmpty()) {
-        addWalkingPathPolyline(map, route.polylinePoints, walkingPathPaintForBasemap(basemapStyle))
+    if (prefs.showWalkingPathPolyline) {
+        val paint = walkingPathPaintForBasemap(basemapStyle)
+        if (pathLead != null && pathLead.guidancePolyline.size >= 2) {
+            val progressLoc = pathLead.progressLocation ?: pathLead.guidancePolyline.first()
+            val progress = com.orienteer.app.domain.RoutePolylineProgress.project(
+                pathLead.guidancePolyline,
+                progressLoc
+            )
+            map.overlays.add(
+                DirectionalWalkingPathOverlay(
+                    polyline = pathLead.guidancePolyline,
+                    progress = progress,
+                    paintColors = paint
+                )
+            )
+        } else if (route.polylinePoints.isNotEmpty()) {
+            addWalkingPathPolyline(map, route.polylinePoints, paint)
+        }
     }
 
     if (useIof) {

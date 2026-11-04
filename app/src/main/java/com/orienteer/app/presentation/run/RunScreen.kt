@@ -45,8 +45,11 @@ import com.orienteer.app.presentation.components.OrienteerTopBar
 import com.orienteer.app.presentation.components.PrimaryGreenButton
 import com.orienteer.app.presentation.components.RouteBottomSheet
 import com.orienteer.app.presentation.components.RoutePlottingLoader
+import com.orienteer.app.domain.RunMapCameraMode
+import com.orienteer.app.domain.RunPathLeadMode
 import com.orienteer.app.presentation.map.MapAttributionBar
 import com.orienteer.app.presentation.map.OsmMapHost
+import com.orienteer.app.presentation.map.PathLeadDrawState
 import com.orienteer.app.ui.components.OrienteerGhostButton
 import com.orienteer.app.util.RoutePdfExporter
 import com.orienteer.app.ui.theme.OrienteerCardShape
@@ -126,13 +129,38 @@ fun RunScreen(
     val paceLabel = GeoUtils.formatRunPace(distanceM, elapsedMs)
     val currentLocation = session?.trackedPoints?.lastOrNull()
     val nextCp = route?.checkpoints?.getOrNull(session?.currentCheckpointIdx ?: 0)
+    val leadEnabled = RunPathLeadMode.isEnabled(
+        showWalkingPathPolyline = mapDisplay.showWalkingPathPolyline,
+        showYouAreHereDuringRun = mapDisplay.showYouAreHereDuringRun
+    )
+    var cameraMode by remember { mutableStateOf(RunMapCameraMode.initial(leadEnabled)) }
+    LaunchedEffect(leadEnabled) {
+        cameraMode = RunMapCameraMode.onLeadEnabledChanged(cameraMode, leadEnabled)
+        if (leadEnabled && cameraMode == RunMapCameraMode.State.FreeLook &&
+            currentLocation != null
+        ) {
+            // Stay free-look until recenter (do not auto-lock).
+        }
+    }
     // Keep air legs on during a run; honor Settings toggle for the OSRM foot path.
     val mapPrefs = mapDisplay.copy(
         showAirLegLines = true,
         showAirLegDistanceLabels = true
     )
+    val guidancePolyline = uiState.liveGuidancePolyline.ifEmpty {
+        route?.polylinePoints.orEmpty()
+    }
+    val pathLead = if (leadEnabled && guidancePolyline.size >= 2) {
+        PathLeadDrawState(
+            guidancePolyline = guidancePolyline,
+            progressLocation = currentLocation
+        )
+    } else {
+        null
+    }
     val context = LocalContext.current
     val exportGpxLabel = stringResource(R.string.export_run_gpx)
+    val recenterLabel = stringResource(R.string.run_recenter_map)
 
     val nextCpTitle = nextCp?.let { cp ->
         when {
@@ -153,12 +181,39 @@ fun RunScreen(
                 mapPrefs = mapPrefs,
                 basemapStyle = mapDisplay.basemapStyle,
                 interactive = true,
+                pathLead = pathLead,
+                followCamera = leadEnabled &&
+                    RunMapCameraMode.shouldAutoFollow(cameraMode) &&
+                    currentLocation != null,
+                mapBearingDeg = uiState.movementBearingDeg,
+                onUserMapGesture = {
+                    if (leadEnabled) {
+                        cameraMode = RunMapCameraMode.onUserGesture(cameraMode)
+                    }
+                },
                 modifier = Modifier.fillMaxSize()
             )
         } else {
             RoutePlottingLoader(
                 modifier = Modifier.align(Alignment.Center),
                 label = "Loading course…"
+            )
+        }
+
+        if (leadEnabled &&
+            cameraMode == RunMapCameraMode.State.FreeLook &&
+            currentLocation != null
+        ) {
+            GhostTextButton(
+                text = recenterLabel,
+                onClick = { cameraMode = RunMapCameraMode.onRecenter(cameraMode) },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(
+                        end = OrienteerSpacing.md,
+                        bottom = if (runPanelExpanded) 220.dp else 72.dp
+                    )
+                    .zIndex(2f)
             )
         }
 

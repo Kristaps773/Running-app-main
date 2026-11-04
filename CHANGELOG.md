@@ -4,7 +4,19 @@ Play release history reconstructed from Cursor chats and AAB build dates.
 **Do not keep a stack of old `.aab` files as history** — use this file + git commits.
 Local Play upload copies live only under `store-assets/releases/` (gitignored); keep the latest AAB.
 
-Current app version in source: **1.3.21** (`versionCode` 26).
+Current app version in source: **1.3.24** (`versionCode` 29).
+
+## 1.3.24 (vc29) — 2026-11-05
+
+Course points catalog + reuse-from-route, live footpath reroute, run map camera / path-lead modes, route polyline progress, locked course points refinements, setup layout metrics. Domain unit tests green after agent fixes.
+
+## 1.3.23 (vc28) — 2026-11-04
+
+Min checkpoint slider / layout metrics + locked-course budget fixes (tests green). Built after other agents finished.
+
+## 1.3.22 (vc27) — 2026-11-04
+
+Locked course points + checkpoint-count planner (unit tests green). Built after other agents finished that work.
 
 ## 1.3.21 (vc26) — 2026-11-03
 

@@ -269,4 +269,29 @@ class RoutePdfLegendTest {
         )
         assertEquals(PdfMapScaleBar.Corner.BOTTOM_RIGHT, corner)
     }
+
+    @Test
+    fun northArrow_avoidsScaleBarCornerAndBusyControls() {
+        val mapW = 400f
+        val mapH = 600f
+        val (nw, nh) = PdfNorthArrow.blockSizePx(minOf(mapW, mapH))
+        assertTrue(nw in 32f..48f)
+        val points = listOf(
+            20f to 20f,
+            40f to 30f,
+            25f to mapH - 30f
+        )
+        val corner = PdfNorthArrow.pickCorner(
+            mapWidth = mapW,
+            mapHeight = mapH,
+            width = nw,
+            height = nh,
+            controlPointsPx = points,
+            avoid = PdfMapScaleBar.Corner.BOTTOM_RIGHT,
+            paddingPx = 8f
+        )
+        assertTrue(corner != PdfMapScaleBar.Corner.BOTTOM_RIGHT)
+        // Top-right is clearest once scale bar owns bottom-right and other corners are busy.
+        assertEquals(PdfMapScaleBar.Corner.TOP_RIGHT, corner)
+    }
 }

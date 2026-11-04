@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.orienteer.app.BuildConfig
 import com.orienteer.app.data.local.ActiveRunStore
 import com.orienteer.app.data.local.BasemapStyle
+import com.orienteer.app.data.local.CoursePointsStore
 import com.orienteer.app.data.local.MapDisplayPreferences
 import com.orienteer.app.data.local.RouteGenerationPreferences
 import com.orienteer.app.data.local.RouteGenerationPreset
@@ -17,6 +18,11 @@ import com.orienteer.app.data.model.Route
 import com.orienteer.app.data.repository.LocationRepository
 import com.orienteer.app.data.repository.RouteRepository
 import com.orienteer.app.domain.CourseEndpoints
+import com.orienteer.app.domain.CoursePointsSet
+import com.orienteer.app.domain.CourseReuseFromRoute
+import com.orienteer.app.domain.CourseReusePayload
+import com.orienteer.app.domain.CourseReuseSnapshot
+import com.orienteer.app.domain.LockedCoursePoints
 import com.orienteer.app.domain.usecase.GenerateRouteUseCase
 import com.orienteer.app.domain.usecase.RouteGenerationFailedException
 import com.orienteer.app.service.LocationTrackingService
@@ -66,7 +72,8 @@ class SetupViewModel @Inject constructor(
     private val generateRoute: GenerateRouteUseCase,
     private val routeRepository: RouteRepository,
     private val activeRunStore: ActiveRunStore,
-    private val preferencesStore: UserPreferencesStore
+    private val preferencesStore: UserPreferencesStore,
+    private val coursePointsStore: CoursePointsStore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<SetupUiState>(SetupUiState.Idle)
@@ -75,6 +82,12 @@ class SetupViewModel @Inject constructor(
     private val _distanceKm = MutableStateFlow(5.0)
     val distanceKm: StateFlow<Double> = _distanceKm.asStateFlow()
 
+    private val _minCheckpoints = MutableStateFlow(UserPreferencesStore.DEFAULT_MIN_CHECKPOINTS)
+    val minCheckpoints: StateFlow<Int> = _minCheckpoints.asStateFlow()
+
+    private val _maxCheckpoints = MutableStateFlow(UserPreferencesStore.DEFAULT_MAX_CHECKPOINTS)
+    val maxCheckpoints: StateFlow<Int> = _maxCheckpoints.asStateFlow()
+
     /** Optional map-picked start; null → use GPS at generate time. */
     private val _customStart = MutableStateFlow<GeoPoint?>(null)
     val customStart: StateFlow<GeoPoint?> = _customStart.asStateFlow()
@@ -82,6 +95,14 @@ class SetupViewModel @Inject constructor(
     /** Non-null → one-way finish; null → return-to-start. */
     private val _customFinish = MutableStateFlow<GeoPoint?>(null)
     val customFinish: StateFlow<GeoPoint?> = _customFinish.asStateFlow()
+
+    /** User-locked intermediate checkpoints ("set in stone"). */
+    private val _lockedCheckpoints = MutableStateFlow<List<GeoPoint>>(emptyList())
+    val lockedCheckpoints: StateFlow<List<GeoPoint>> = _lockedCheckpoints.asStateFlow()
+
+    /** When true and ≥2 locked pins, generator may permute their visit order each Generate. Default on. */
+    private val _lockedAnyOrder = MutableStateFlow(true)
+    val lockedAnyOrder: StateFlow<Boolean> = _lockedAnyOrder.asStateFlow()
 
     val latestRoute: StateFlow<Route?> = routeRepository.observeRoutes()
         .map { routes -> routes.firstOrNull() }
@@ -103,27 +124,97 @@ class SetupViewModel @Inject constructor(
         }
     }
 
+    private data class WarmupKey(
+        val distanceBucketM: Long,
+        val minCheckpoints: Int,
+        val maxCheckpoints: Int
+    )
+
     private data class WarmedRoute(
         val origin: GeoPoint,
         val targetDistanceM: Double,
         val route: Route
     )
 
-    private val warmupCache = mutableMapOf<Long, WarmedRoute>()
+    private val warmupCache = mutableMapOf<WarmupKey, WarmedRoute>()
     private val warmupLock = Any()
     private var warmupJob: Job? = null
-    /** Canonical metres key the in-flight warmup is prioritizing (slider distance). */
-    private var warmupPrimaryKey: Long? = null
+    /** Canonical key the in-flight warmup is prioritizing (distance + checkpoint window). */
+    private var warmupPrimaryKey: WarmupKey? = null
     private var warmupPrimaryDone: CompletableDeferred<Unit>? = null
     private var distanceDebounceJob: Job? = null
     private var activeGenerationRouteId: String? = null
 
+    init {
+        viewModelScope.launch {
+            preferencesStore.routeGenerationPreferences.collect { prefs ->
+                val (lo, hi) = coerceWindowWithLocked(prefs.minCheckpoints, prefs.maxCheckpoints)
+                _minCheckpoints.value = lo
+                _maxCheckpoints.value = hi
+            }
+        }
+    }
+
+    /**
+     * Slider / prefs window, floored by locked pin count so min cannot drop below
+     * custom intermediate points already placed.
+     */
+    private fun coerceWindowWithLocked(min: Int, max: Int): Pair<Int, Int> {
+        val lockedFloor = _lockedCheckpoints.value.size
+            .coerceIn(0, UserPreferencesStore.MAX_CHECKPOINTS)
+        val absoluteFloor = maxOf(UserPreferencesStore.MIN_CHECKPOINTS, lockedFloor)
+        val (lo0, hi0) = UserPreferencesStore.coerceCheckpointWindow(min, max)
+        val lo = maxOf(lo0, absoluteFloor).coerceIn(
+            UserPreferencesStore.MIN_CHECKPOINTS,
+            UserPreferencesStore.MAX_CHECKPOINTS
+        )
+        val hi = maxOf(hi0, lo).coerceIn(lo, UserPreferencesStore.MAX_CHECKPOINTS)
+        return lo to hi
+    }
+
+    fun setCheckpointWindow(min: Int, max: Int) {
+        val (lo, hi) = coerceWindowWithLocked(min, max)
+        _minCheckpoints.value = lo
+        _maxCheckpoints.value = hi
+        viewModelScope.launch {
+            preferencesStore.setCheckpointWindow(lo, hi)
+        }
+        cancelWarmupJobOnly()
+        synchronized(warmupLock) { warmupCache.clear() }
+        distanceDebounceJob?.cancel()
+        distanceDebounceJob = viewModelScope.launch {
+            delay(WARMUP_DEBOUNCE_MS)
+            if (_uiState.value is SetupUiState.Idle) {
+                scheduleRouteWarmup()
+            }
+        }
+    }
+
+    val recentCoursePoints: StateFlow<List<CoursePointsSet>> =
+        coursePointsStore.recent.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            emptyList()
+        )
+
+    val favoriteCoursePoints: StateFlow<List<CoursePointsSet>> =
+        coursePointsStore.favorites.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            emptyList()
+        )
+
     fun setDistance(km: Double) {
         val start = _customStart.value
         val finish = _customFinish.value
+        val locked = _lockedCheckpoints.value
+        val anyOrder = _lockedAnyOrder.value && locked.size >= 2
         val maxKm = com.orienteer.app.domain.ProAccess.maxTargetDistanceKm()
-        val coercedKm = if (finish != null && start != null) {
-            CourseEndpoints.coerceTargetDistanceM(km * 1000.0, start, finish) / 1000.0
+        val originForFloor = start
+        val coercedKm = if (originForFloor != null && (finish != null || locked.isNotEmpty())) {
+            LockedCoursePoints.coerceTargetDistanceM(
+                km * 1000.0, originForFloor, finish, locked, anyOrder = anyOrder
+            ) / 1000.0
         } else {
             km.coerceIn(0.5, maxKm)
         }
@@ -138,25 +229,183 @@ class SetupViewModel @Inject constructor(
     }
 
     /**
-     * @param start optional custom start (null keeps previous / GPS-only).
+     * @param start optional custom start (null → GPS at generate).
      * @param finish null means return-to-start; non-null means one-way.
+     * @param locked intermediate pins that must be visited.
+     * @param anyOrder when true, permute locked visit order each Generate (≥2 pins). Default on.
      */
-    fun applyCourseEndpoints(start: GeoPoint?, finish: GeoPoint?) {
+    fun applyCoursePoints(
+        start: GeoPoint?,
+        finish: GeoPoint?,
+        locked: List<GeoPoint> = emptyList(),
+        anyOrder: Boolean = true,
+        rememberRecent: Boolean = true
+    ) {
         _customStart.value = start
         _customFinish.value = finish
-        if (finish != null && start != null) {
+        _lockedCheckpoints.value = locked.take(LockedCoursePoints.MAX_LOCKED_INTERMEDIATES)
+        // Persist preference even with <2 pins so the next multi-pin course stays Any order.
+        _lockedAnyOrder.value = anyOrder
+        // Raise min/max so the Setup sliders cannot sit below the locked pin count.
+        val (lo, hi) = coerceWindowWithLocked(_minCheckpoints.value, _maxCheckpoints.value)
+        if (lo != _minCheckpoints.value || hi != _maxCheckpoints.value) {
+            setCheckpointWindow(lo, hi)
+        }
+        val hasCustom = start != null || finish != null || locked.isNotEmpty()
+        if (hasCustom) {
             setDistance(_distanceKm.value)
             cancelWarmupJobOnly()
             synchronized(warmupLock) { warmupCache.clear() }
-        } else if (finish == null) {
+            if (rememberRecent && start != null) {
+                rememberActiveAsRecent()
+            }
+            if (finish == null && locked.isEmpty()) {
+                scheduleRouteWarmup()
+            }
+        } else {
             scheduleRouteWarmup()
         }
     }
 
+    /** @deprecated Prefer [applyCoursePoints]; kept for call-site compatibility. */
+    fun applyCourseEndpoints(start: GeoPoint?, finish: GeoPoint?) {
+        applyCoursePoints(start, finish, _lockedCheckpoints.value, _lockedAnyOrder.value)
+    }
+
+    /** Clears active pins only — Recent / Favorites are untouched. */
     fun clearCourseEndpoints() {
         _customStart.value = null
         _customFinish.value = null
+        _lockedCheckpoints.value = emptyList()
+        _lockedAnyOrder.value = true
         scheduleRouteWarmup()
+    }
+
+    fun applyCoursePointsSet(set: CoursePointsSet) {
+        applyCoursePoints(
+            start = set.start,
+            finish = set.finish,
+            locked = set.locked,
+            anyOrder = set.anyOrder
+        )
+    }
+
+    /**
+     * History → New from this run.
+     * @param withPins when false (Knobs only), clears locked pins after applying distance/prefs.
+     */
+    fun applyReusePayload(payload: CourseReusePayload, withPins: Boolean) {
+        payload.generationPrefs?.let { prefs ->
+            setCheckpointWindow(
+                payload.minCheckpoints ?: prefs.minCheckpoints,
+                payload.maxCheckpoints ?: prefs.maxCheckpoints
+            )
+            viewModelScope.launch {
+                preferencesStore.setMaxPathToAirRatio(prefs.maxPathToAirRatio)
+                preferencesStore.setAirDistanceToleranceM(prefs.airDistanceToleranceM)
+            }
+        } ?: run {
+            val min = payload.minCheckpoints
+            val max = payload.maxCheckpoints
+            if (min != null && max != null) setCheckpointWindow(min, max)
+        }
+        _distanceKm.value = payload.targetDistanceKm
+        if (withPins) {
+            applyCoursePoints(
+                start = payload.start,
+                finish = payload.finish,
+                locked = payload.locked,
+                anyOrder = payload.anyOrder
+            )
+        } else {
+            applyCoursePoints(
+                start = payload.start,
+                finish = payload.finish,
+                locked = emptyList(),
+                anyOrder = true,
+                rememberRecent = false
+            )
+        }
+    }
+
+    fun applyReuseFromRoute(route: Route, withPins: Boolean) {
+        val payload = CourseReuseFromRoute.fromRoute(route) ?: return
+        applyReusePayload(payload, withPins)
+    }
+
+    fun rememberActiveAsRecent() {
+        val start = _customStart.value ?: return
+        val set = CoursePointsSet(
+            id = UUID.randomUUID().toString(),
+            savedAtMs = System.currentTimeMillis(),
+            start = start,
+            finish = _customFinish.value,
+            locked = _lockedCheckpoints.value,
+            anyOrder = _lockedAnyOrder.value,
+            usedGpsStart = false
+        )
+        viewModelScope.launch { coursePointsStore.pushRecent(set) }
+    }
+
+    /**
+     * @return null if saved; current favorites when full (UI must pick replace).
+     */
+    /** @return null if saved or nothing to save; favorites list when full. */
+    suspend fun saveActiveToFavorites(): List<CoursePointsSet>? {
+        val start = _customStart.value ?: return null
+        val set = CoursePointsSet(
+            id = UUID.randomUUID().toString(),
+            savedAtMs = System.currentTimeMillis(),
+            start = start,
+            finish = _customFinish.value,
+            locked = _lockedCheckpoints.value,
+            anyOrder = _lockedAnyOrder.value,
+            usedGpsStart = false
+        )
+        return coursePointsStore.addFavorite(set)
+    }
+
+    /** @return null if saved or nothing to save; favorites list when full. */
+    suspend fun saveRoutePinsToFavorites(route: Route): List<CoursePointsSet>? {
+        val payload = CourseReuseFromRoute.fromRoute(route) ?: return null
+        val set = CoursePointsSet(
+            id = UUID.randomUUID().toString(),
+            savedAtMs = System.currentTimeMillis(),
+            start = payload.start,
+            finish = payload.finish,
+            locked = payload.locked,
+            anyOrder = payload.anyOrder,
+            usedGpsStart = false
+        )
+        return coursePointsStore.addFavorite(set)
+    }
+
+    fun removeRecentCoursePoints(id: String) {
+        viewModelScope.launch { coursePointsStore.removeRecent(id) }
+    }
+
+    fun removeFavoriteCoursePoints(id: String) {
+        viewModelScope.launch { coursePointsStore.removeFavorite(id) }
+    }
+
+    fun replaceFavoriteCoursePoints(removeId: String, set: CoursePointsSet) {
+        viewModelScope.launch { coursePointsStore.replaceFavorite(removeId, set) }
+    }
+
+    private fun Route.withCurrentReuseSnapshot(prefs: RouteGenerationPreferences): Route {
+        val anyOrder = _lockedAnyOrder.value && _lockedCheckpoints.value.size >= 2
+        return copy(reuseSnapshot = CourseReuseSnapshot.from(anyOrder, prefs))
+    }
+
+    private suspend fun persistGeneratedRoute(
+        route: Route,
+        prefs: RouteGenerationPreferences,
+        pushRecent: Boolean = false
+    ) {
+        routeRepository.saveRoute(route.withCurrentReuseSnapshot(prefs))
+        if (pushRecent && (_customStart.value != null || _lockedCheckpoints.value.isNotEmpty())) {
+            rememberActiveAsRecent()
+        }
     }
 
     suspend fun resolveGpsForPicker(): GeoPoint? =
@@ -190,7 +439,9 @@ class SetupViewModel @Inject constructor(
         }
         cancelWarmupJobOnly()
         val currentM = (_distanceKm.value * 1000.0).coerceIn(500.0, 50_000.0)
-        val primaryKey = canonicalTargetM(currentM)
+        val minCp = _minCheckpoints.value
+        val maxCp = _maxCheckpoints.value
+        val primaryKey = warmupKey(currentM, minCp, maxCp)
         val primaryDone = CompletableDeferred<Unit>()
         synchronized(warmupLock) {
             warmupPrimaryKey = primaryKey
@@ -220,11 +471,14 @@ class SetupViewModel @Inject constructor(
                     }
                 }
 
-                val prefs = preferencesStore.routeGenerationPreferences.first()
+                val prefs = preferencesStore.routeGenerationPreferences.first().copy(
+                    minCheckpoints = minCp,
+                    maxCheckpoints = maxCp
+                )
                 for (targetM in targets) {
                     ensureActive()
                     if (_uiState.value != SetupUiState.Idle) return@launch
-                    val key = canonicalTargetM(targetM)
+                    val key = warmupKey(targetM, minCp, maxCp)
                     val alreadyHave = synchronized(warmupLock) {
                         val existing = warmupCache[key]
                         existing != null &&
@@ -295,21 +549,23 @@ class SetupViewModel @Inject constructor(
                         return@launch
                     }
                 val destination = _customFinish.value
+                val locked = _lockedCheckpoints.value
+                val anyOrder = _lockedAnyOrder.value && locked.size >= 2
 
                 var userTargetM = _distanceKm.value * 1000.0
-                if (destination != null) {
-                    userTargetM = CourseEndpoints.coerceTargetDistanceM(
-                        userTargetM, origin, destination
+                if (destination != null || locked.isNotEmpty()) {
+                    userTargetM = LockedCoursePoints.coerceTargetDistanceM(
+                        userTargetM, origin, destination, locked, anyOrder = anyOrder
                     )
                     when (
-                        val decision = CourseEndpoints.evaluateTargetDistance(
-                            userTargetM, origin, destination
+                        val decision = LockedCoursePoints.evaluateTargetDistance(
+                            userTargetM, origin, destination, locked, anyOrder = anyOrder
                         )
                     ) {
                         is CourseEndpoints.TargetDistanceDecision.EndpointsExceedMax -> {
                             withContext(Dispatchers.Main) {
                                 _uiState.value = SetupUiState.Error(
-                                    "Start and finish are ${GeoUtils.formatDistance(decision.airM)} apart — " +
+                                    "Locked course points are ${GeoUtils.formatDistance(decision.airM)} apart — " +
                                         "over the ${GeoUtils.formatDistance(decision.maxM)} limit."
                                 )
                             }
@@ -319,7 +575,7 @@ class SetupViewModel @Inject constructor(
                         is CourseEndpoints.TargetDistanceDecision.AboveMaximum -> {
                             withContext(Dispatchers.Main) {
                                 _uiState.value = SetupUiState.Error(
-                                    "Invalid target distance for these start/finish points."
+                                    "Invalid target distance for these course points."
                                 )
                             }
                             return@launch
@@ -332,13 +588,23 @@ class SetupViewModel @Inject constructor(
                     }
                 }
 
-                val userKey = canonicalTargetM(userTargetM)
-                if (destination == null) {
-                    takeWarmRouteIfReady(origin, userTargetM)?.let { route ->
+                val minCp = LockedCoursePoints.effectiveMinIntermediates(
+                    locked.size,
+                    _minCheckpoints.value
+                )
+                val maxCp = _maxCheckpoints.value.coerceAtLeast(minCp)
+                val userKey = warmupKey(userTargetM, minCp, maxCp)
+                // Warmup is loop-only without locked pins.
+                val prefs = preferencesStore.routeGenerationPreferences.first().copy(
+                    minCheckpoints = minCp,
+                    maxCheckpoints = maxCp
+                )
+                if (destination == null && locked.isEmpty()) {
+                    takeWarmRouteIfReady(origin, userTargetM, minCp, maxCp)?.let { route ->
                         cancelWarmupJobOnly()
-                        routeRepository.saveRoute(route)
+                        persistGeneratedRoute(route, prefs, pushRecent = true)
                         withContext(Dispatchers.Main) {
-                            _uiState.value = SetupUiState.Success(route)
+                            _uiState.value = SetupUiState.Success(route.withCurrentReuseSnapshot(prefs))
                         }
                         return@launch
                     }
@@ -356,11 +622,11 @@ class SetupViewModel @Inject constructor(
                             _uiState.value = SetupUiState.GeneratingRoute
                         }
                         withTimeoutOrNull(WARMUP_AWAIT_MAX_MS) { awaitSame.await() }
-                        takeWarmRouteIfReady(origin, userTargetM)?.let { route ->
+                        takeWarmRouteIfReady(origin, userTargetM, minCp, maxCp)?.let { route ->
                             cancelWarmupJobOnly()
-                            routeRepository.saveRoute(route)
+                            persistGeneratedRoute(route, prefs, pushRecent = true)
                             withContext(Dispatchers.Main) {
-                                _uiState.value = SetupUiState.Success(route)
+                                _uiState.value = SetupUiState.Success(route.withCurrentReuseSnapshot(prefs))
                             }
                             return@launch
                         }
@@ -372,34 +638,35 @@ class SetupViewModel @Inject constructor(
                     _uiState.value = SetupUiState.GeneratingRoute
                 }
                 activeGenerationRouteId = null
-                val prefs = preferencesStore.routeGenerationPreferences.first()
                 val result = generateRoute(
                     origin = origin,
                     targetDistanceM = userTargetM,
                     generationPrefs = prefs,
-                    destination = destination
+                    destination = destination,
+                    lockedCheckpoints = locked,
+                    lockedAnyOrder = anyOrder
                 ) { route ->
                     activeGenerationRouteId = route.id
-                    routeRepository.saveRoute(route)
+                    persistGeneratedRoute(route, prefs)
                     withContext(Dispatchers.Main) {
                         if ((_uiState.value is SetupUiState.GeneratingRoute ||
                                 _uiState.value is SetupUiState.RefiningRoute) &&
                             route.hasRoutedWalkingPath
                         ) {
-                            _uiState.value = SetupUiState.RefiningRoute(route)
+                            _uiState.value = SetupUiState.RefiningRoute(route.withCurrentReuseSnapshot(prefs))
                         }
                     }
                 }
                 result
                     .onSuccess { route ->
                         activeGenerationRouteId = null
-                        routeRepository.saveRoute(route)
+                        persistGeneratedRoute(route, prefs, pushRecent = true)
                         withContext(Dispatchers.Main) {
                             // Skip if Setup already reset after navigating on a refining update.
                             when (_uiState.value) {
                                 is SetupUiState.GeneratingRoute,
                                 is SetupUiState.RefiningRoute -> {
-                                    _uiState.value = SetupUiState.Success(route)
+                                    _uiState.value = SetupUiState.Success(route.withCurrentReuseSnapshot(prefs))
                                 }
                                 else -> Unit
                             }
@@ -608,8 +875,13 @@ class SetupViewModel @Inject constructor(
         scheduleRouteWarmup()
     }
 
-    private fun takeWarmRouteIfReady(origin: GeoPoint, userTargetM: Double): Route? {
-        val key = canonicalTargetM(userTargetM)
+    private fun takeWarmRouteIfReady(
+        origin: GeoPoint,
+        userTargetM: Double,
+        minCheckpoints: Int,
+        maxCheckpoints: Int
+    ): Route? {
+        val key = warmupKey(userTargetM, minCheckpoints, maxCheckpoints)
         synchronized(warmupLock) {
             val w = warmupCache.remove(key) ?: return null
             if (GeoUtils.distanceMeters(w.origin, origin) > ORIGIN_MATCH_MAX_M) return null
@@ -634,5 +906,12 @@ class SetupViewModel @Inject constructor(
             return ((clamped / WARM_TARGET_BUCKET_M).roundToInt() * WARM_TARGET_BUCKET_M.toLong())
                 .coerceIn(500L, 50_000L)
         }
+
+        private fun warmupKey(m: Double, minCheckpoints: Int, maxCheckpoints: Int): WarmupKey =
+            WarmupKey(
+                distanceBucketM = canonicalTargetM(m),
+                minCheckpoints = minCheckpoints,
+                maxCheckpoints = maxCheckpoints
+            )
     }
 }

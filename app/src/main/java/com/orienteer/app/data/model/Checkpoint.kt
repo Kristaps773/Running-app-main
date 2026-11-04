@@ -11,6 +11,7 @@ package com.orienteer.app.data.model
  * @param isStart         True only for the origin / finish checkpoint.
  * @param isReached       Set to true when the runner comes within PROXIMITY_RADIUS_M.
  * @param distanceFromPrev  Walking distance from the previous checkpoint, metres.
+ * @param isFixed         True when the user locked this intermediate ("set in stone").
  */
 data class Checkpoint(
     val id: Int,
@@ -20,7 +21,8 @@ data class Checkpoint(
     val landmarkType: String? = null,
     val isStart: Boolean = false,
     val isReached: Boolean = false,
-    val distanceFromPrev: Double = 0.0
+    val distanceFromPrev: Double = 0.0,
+    val isFixed: Boolean = false
 ) {
     companion object {
         /** Runner must be within this radius (metres) to register a checkpoint visit. */
