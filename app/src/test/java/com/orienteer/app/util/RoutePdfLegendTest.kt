@@ -51,6 +51,30 @@ class RoutePdfLegendTest {
     }
 
     @Test
+    fun controlSheet_genericPathJunction_hasReadableFeatureLabel() {
+        val checkpoints = listOf(
+            Checkpoint(
+                id = 0,
+                position = GeoPoint(56.95, 24.1),
+                description = "Start",
+                isStart = true,
+            ),
+            Checkpoint(
+                id = 1,
+                position = GeoPoint(56.951, 24.11),
+                description = "Checkpoint 1: Near path junction.",
+                landmarkType = "generic=path_junction",
+                isStart = false,
+                distanceFromPrev = 200.0,
+            ),
+        )
+        val rows = ControlDescriptionSheetBuilder.rows(checkpoints)
+        val cp1 = rows[1] as ControlDescriptionRow.Control
+        assertEquals(IofControlFeature.PATH_JUNCTION, cp1.feature)
+        assertTrue(cp1.featureLabel.isNotBlank())
+    }
+
+    @Test
     fun controlSheet_mapsLandmarkTypesToFeatureColumn() {
         val checkpoints = listOf(
             Checkpoint(
@@ -162,8 +186,10 @@ class RoutePdfLegendTest {
             legendLineCount = 0
         )
         assertNull(layout.legendRect)
-        assertTrue(layout.mapRect.height() > 500f)
-        assertTrue(layout.mapRect.top > layout.titleBaseline)
+        // No title strip — map fills the printable A4 area.
+        assertEquals(PdfPageLayout.MARGIN, layout.mapRect.top, 0.01f)
+        assertTrue(layout.mapRect.height() > 800f)
+        assertEquals(10f, PdfPageLayout.MARGIN, 0.01f)
     }
 
     @Test

@@ -6,6 +6,7 @@ import com.google.gson.JsonSyntaxException
 import com.orienteer.app.data.api.OsrmApiService
 import com.orienteer.app.data.api.OverpassApiService
 import com.orienteer.app.data.api.parseJson
+import com.orienteer.app.data.local.PointObjectCache
 import com.orienteer.app.data.local.RouteGenerationPreferences
 import com.orienteer.app.data.local.UserPreferencesStore
 import com.orienteer.app.data.model.Checkpoint
@@ -13,6 +14,7 @@ import com.orienteer.app.data.model.GeoPoint
 import com.orienteer.app.data.model.OsrmNearestResponse
 import com.orienteer.app.data.model.OsrmRouteResponse
 import com.orienteer.app.data.model.OverpassElement
+import com.orienteer.app.data.model.OverpassLandmarkTags
 import com.orienteer.app.data.model.OverpassResponse
 import com.orienteer.app.data.model.Route
 import com.orienteer.app.domain.CourseEndpoints
@@ -20,6 +22,7 @@ import com.orienteer.app.domain.LockedCoursePoints
 import com.orienteer.app.util.CheckpointDescriptionGenerator
 import com.orienteer.app.util.GeoUtils
 import com.orienteer.app.util.PolylineSimplifier
+import java.io.File
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -35,9 +38,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeout
+import kotlin.coroutines.coroutineContext
 
 /**
  * Generates a randomised loop running route using straight-line (Haversine) distances only.
@@ -55,8 +60,11 @@ import kotlinx.coroutines.withTimeout
 class GenerateRouteUseCase @Inject constructor(
     private val osrm: OsrmApiService,
     private val overpass: OverpassApiService,
-    private val gson: Gson
+    private val gson: Gson,
 ) {
+
+  /** Optional override for unit tests; production uses a tmpdir cache inside enrich. */
+  internal var pointObjectCache: PointObjectCache? = null
 
     private sealed class RoutingFailure {
         data class Network(val cause: IOException) : RoutingFailure()
@@ -80,15 +88,15 @@ class GenerateRouteUseCase @Inject constructor(
          * (and any) controls that were not attached during object-ring selection.
          */
         private const val OVERPASS_ENRICH_MISSING_LANDMARKS = true
-        private const val ENRICH_AROUND_RADIUS_M = 130
-        private const val ENRICH_MAX_ELEMENTS = 48
+        /** Object-ring candidate pool — modest so Overpass stays fast. */
+        private const val CANDIDATE_MAX_ELEMENTS = 80
 
         /** Nominal segment floor; actual floors shrink via [CheckpointCountPlanner.segmentMinFloorM]. */
         private const val SEGMENT_MIN_M = 200.0
         private const val SEGMENT_MAX_M = 2_000.0
         /** Max OSRM snap distance from requested point to road (too tight → all candidates rejected). */
         private const val SNAP_MAX_DISTANCE_M = 1_200.0
-        private const val SNAP_RETRIES = 4
+        private const val SNAP_RETRIES = 2
         /** Nominal spacing; actual floors shrink via [CheckpointCountPlanner.candidateSpacingFloorM]. */
         private const val CANDIDATE_MIN_SPACING_M = 120.0
         private const val FAST_ACCEPT_TOLERANCE_M = 500.0
@@ -99,20 +107,30 @@ class GenerateRouteUseCase @Inject constructor(
         private const val BUDGET_CLOSE_LOOP_FRACTION = 0.5
         /** Allow slight outward growth once closing phase started. */
         private const val MAX_RADIUS_GROWTH_AFTER_HALF = 1.05
-        private const val MAX_ITERATIONS = 5
-        private const val MAX_ITERATIONS_SHORT = 6
+        /** Keep classic OSRM tries low — each public /route call is multi-second. */
+        private const val MAX_ITERATIONS = 3
+        private const val MAX_ITERATIONS_SHORT = 3
         /**
          * Full generation passes with a new random layout when an attempt fails
          * (OSRM unreachable, empty pool, etc.). Inner loops also try many layouts per attempt.
          */
-        private const val MAX_GENERATION_ATTEMPTS = 3
+        private const val MAX_GENERATION_ATTEMPTS = 2
         /** Per-attempt wall-clock limit so UI cannot hang forever on public OSRM. */
         private const val ATTEMPT_TIMEOUT_MS = 45_000L
         private const val OSRM_RETRY_BACKOFF_MS = 250L
         /** Cap Overpass so a slow POI query cannot consume the whole attempt. */
-        private const val OVERPASS_TIMEOUT_MS = 6_000L
+        private const val OVERPASS_TIMEOUT_MS = 8_000L
+        private const val OVERPASS_ENRICH_TIMEOUT_MS = 8_000L
+        private const val SNAP_ENRICH_BUDGET_MS = 18_000L
+        /** Overpass-only slice inside the snap enrich budget. */
+        private const val SNAP_FETCH_BUDGET_MS = 10_000L
+        private const val CACHE_FETCH_AROUND_M = 120
+        private const val CACHE_ELEMENT_ASSIGN_RADIUS_M = 200.0
+        /** Air-leg → path estimate used during planner reverts (avoids N OSRM calls). */
+        private const val SNAP_PATH_ESTIMATE_FACTOR = 1.35
         private const val SHORT_ROUTE_M = 3_000.0
         private const val SNAP_PARALLELISM = 4
+        private const val MAX_NEAREST_CALLS_PER_ATTEMPT = 40
         private const val POLYLINE_SIMPLIFY_TOLERANCE_M = 8.0
         private const val RUNNING_SPEED_KMH = 10.0      // fallback est. time when OSRM route unavailable (km/h)
         /** Round lat/lon to ~110 m so nearby regenerations reuse POI fetch. */
@@ -127,50 +145,6 @@ class GenerateRouteUseCase @Inject constructor(
         private val overpassCandidateCache =
             ConcurrentHashMap<Long, CachedOverpass>()
 
-        private val TAG_WEIGHTS = mapOf(
-            "historic=monument" to 1.6,
-            "historic=memorial" to 1.5,
-            "historic=statue" to 1.55,
-            "historic=ruins" to 1.5,
-            "historic=wayside_cross" to 1.45,
-            "historic=archaeological_site" to 1.45,
-            "historic=castle" to 1.5,
-            "tourism=viewpoint" to 1.5,
-            "tourism=artwork" to 1.4,
-            "tourism=information" to 1.35,
-            "tourism=picnic_site" to 1.25,
-            "amenity=fountain" to 1.3,
-            "amenity=bench" to 1.2,
-            "amenity=shelter" to 1.25,
-            "amenity=drinking_water" to 1.2,
-            "amenity=post_box" to 1.15,
-            "natural=peak" to 1.4,
-            "natural=rock" to 1.35,
-            "natural=spring" to 1.35,
-            "natural=tree" to 1.15,
-            "man_made=tower" to 1.45,
-            "man_made=water_tower" to 1.35,
-            "man_made=windmill" to 1.4,
-            "man_made=cross" to 1.4,
-            "leisure=playground" to 1.2,
-            "leisure=picnic_table" to 1.2,
-            "leisure=fitness_station" to 1.15,
-            "barrier=bollard" to 1.15,
-            "highway=bus_stop" to 1.1,
-            "highway=street_lamp" to 1.05
-        )
-
-        /** POI types unsuitable as checkpoint anchors (large areas, traffic, private). */
-        private val EXCLUDED_PRIMARY_TAGS = setOf(
-            "amenity=parking",
-            "amenity=fuel",
-            "amenity=bank",
-            "amenity=hospital",
-            "amenity=police",
-            "amenity=prison",
-            "leisure=pitch",
-            "leisure=stadium"
-        )
     }
 
     /**
@@ -237,6 +211,7 @@ class GenerateRouteUseCase @Inject constructor(
         var lastFailure: Throwable? = null
         val attemptSummaries = mutableListOf<Map<String, Any?>>()
         repeat(MAX_GENERATION_ATTEMPTS) { attempt ->
+            coroutineContext.ensureActive()
             lastRoutingFailure = null
             lastOsrmCallLabel = null
             attemptDiagnostics.clear()
@@ -296,8 +271,15 @@ class GenerateRouteUseCase @Inject constructor(
                     )
                 )
             }
-            result.onSuccess { return Result.success(it) }
-            result.onFailure { error ->
+            if (result.isSuccess) {
+                return Result.success(
+                    enrichPostSuccess(
+                        result.getOrThrow(),
+                        maxPathToAirRatio = maxPathToAirRatio,
+                    )
+                )
+            }
+            result.exceptionOrNull()?.let { error ->
                 attemptDiagnostics.putIfAbsent(
                     "elapsed_ms",
                     (System.currentTimeMillis() - attemptStartedMs).toInt()
@@ -428,8 +410,13 @@ class GenerateRouteUseCase @Inject constructor(
                 (maxCheckpoints.toLong() shl 16) xor
                 (lockedCheckpoints.size.toLong() shl 24)
         )
-        val n = CheckpointCountPlanner.pickCount(minCheckpoints, maxCheckpoints, rng)
-            .coerceAtLeast(lockedCheckpoints.size)
+        val n = CheckpointCountPlanner.pickCount(
+            min = minCheckpoints,
+            max = maxCheckpoints,
+            targetDistanceM = targetDistanceM,
+            maxPathToAirRatio = maxPathToAirRatio,
+            rng = rng
+        ).coerceAtLeast(lockedCheckpoints.size)
         val avgLegM = CheckpointCountPlanner.averageLegMeters(targetDistanceM, n)
         val segmentMinM = CheckpointCountPlanner.segmentMinFloorM(avgLegM)
         val spacingM = CheckpointCountPlanner.candidateSpacingFloorM(avgLegM)
@@ -480,28 +467,13 @@ class GenerateRouteUseCase @Inject constructor(
             )
         }
 
-        val candidates = fetchCandidates(origin, targetDistanceM)
-        attemptDiagnostics["candidate_pool_size"] = candidates.size
-        if (candidates.size < n) {
-            Log.d(TAG, "Object-ring fallback: candidates=${candidates.size}, needed=$n")
-            attemptDiagnostics["generator"] = "classic_sparse_pois"
-            return generateClassicRoute(
-                origin, targetDistanceM, n, rng, maxPathToAirRatio, airDistanceToleranceM,
-                segmentMinM, spacingM, routeId, emitRouteUpdate
-            )
-        }
-        return generateObjectRingRoute(
-            origin = origin,
-            targetDistanceM = targetDistanceM,
-            n = n,
-            pool = candidates,
-            rng = rng,
-            maxPathToAirRatio = maxPathToAirRatio,
-            airDistanceToleranceM = airDistanceToleranceM,
-            segmentMinM = segmentMinM,
-            spacingM = spacingM,
-            routeId = routeId,
-            emitRouteUpdate = emitRouteUpdate
+        // Path first (OSRM only). Do not block generation on a large area Overpass dump —
+        // landmarks are attached afterward via near-checkpoint enrich in finalizeRoute().
+        attemptDiagnostics["generator"] = "classic"
+        attemptDiagnostics["skipped_area_overpass"] = true
+        return generateClassicRoute(
+            origin, targetDistanceM, n, rng, maxPathToAirRatio, airDistanceToleranceM,
+            segmentMinM, spacingM, routeId, emitRouteUpdate
         )
     }
 
@@ -559,6 +531,7 @@ class GenerateRouteUseCase @Inject constructor(
             ranked.mapNotNull { candidateByKey[it.key] }
 
         repeat(iterationLimit) { iteration ->
+            coroutineContext.ensureActive()
             if (routeFetchAttempts >= maxOsrmCalls) return@repeat
             val slots = ObjectRingPlanner.ringSlots(origin, ringR, n, bearing0)
             var ranked = ObjectRingPlanner.assignObjectsToRing(
@@ -577,6 +550,7 @@ class GenerateRouteUseCase @Inject constructor(
             var lastPathM = 0.0
             var swapTries = 0
             while (swapTries < 3 && routeFetchAttempts < maxOsrmCalls) {
+                coroutineContext.ensureActive()
                 val selected = selectedObjects(ranked!!)
                 if (selected.size < n) {
                     selectionNullCount++
@@ -638,7 +612,8 @@ class GenerateRouteUseCase @Inject constructor(
                         id = routeId,
                         origin = origin,
                         snapped = snapped,
-                        selected = selected,
+                        selected = selected.map { it },
+                        onObjectFlags = List(selected.size) { true },
                         distancesFromPrev = distancesFromPrev,
                         polyline = polyline,
                         targetDistanceM = targetDistanceM,
@@ -797,6 +772,7 @@ class GenerateRouteUseCase @Inject constructor(
         attemptDiagnostics["locked_fillers"] = (requiredN - locked.size).coerceAtLeast(0)
 
         repeat(iterationLimit) {
+            coroutineContext.ensureActive()
             val ordered = LockedCoursePoints.visitOrder(locked, anyOrder, rng)
             val fillers = (requiredN - ordered.size).coerceAtLeast(0)
             val perLeg = LockedCoursePoints.distributeFillers(ordered.size + 1, fillers, rng)
@@ -821,7 +797,9 @@ class GenerateRouteUseCase @Inject constructor(
                 if (fCount > 0) {
                     val budget = legBudgets[leg].coerceAtLeast(fCount * segmentMinM)
                     // All fCount lengths sum to the stretch budget for this leg (then append locked).
-                    val lengths = computeRandomSegmentLengths(fCount, budget, rng, segmentMinM)
+                    val lengths = computeRandomSegmentLengths(
+                        fCount, budget, rng, segmentMinM, maxPathToAirRatio
+                    )
                     val generated = generatePointsSequentially(
                         origin = legFrom,
                         segmentLengths = lengths,
@@ -1011,7 +989,9 @@ class GenerateRouteUseCase @Inject constructor(
         routeId: String,
         emitRouteUpdate: suspend (Route) -> Unit
     ): Route {
-        var segmentLengths = computeRandomSegmentLengths(n + 1, targetDistanceM, rng, segmentMinM)
+        var segmentLengths = computeRandomSegmentLengths(
+            n + 1, targetDistanceM, rng, segmentMinM, maxPathToAirRatio
+        )
         var bestRoute: Route? = null
         var bestRouteFallback: Route? = null
         var bestError = Double.MAX_VALUE
@@ -1027,6 +1007,7 @@ class GenerateRouteUseCase @Inject constructor(
         attemptDiagnostics["fast_accept_tolerance_m"] = fastAcceptM.toInt()
 
         repeat(iterationLimit) {
+            coroutineContext.ensureActive()
             val rawPositions = generatePointsSequentially(
                 origin = origin,
                 segmentLengths = segmentLengths.take(n),
@@ -1141,7 +1122,9 @@ class GenerateRouteUseCase @Inject constructor(
         emitRouteUpdate: suspend (Route) -> Unit
     ): Route {
         attemptDiagnostics.putIfAbsent("generator", "classic")
-        var segmentLengths = computeRandomSegmentLengths(n + 1, targetDistanceM, rng, segmentMinM)
+        var segmentLengths = computeRandomSegmentLengths(
+            n + 1, targetDistanceM, rng, segmentMinM, maxPathToAirRatio
+        )
         var bestRoute: Route? = null
         var bestRouteFallback: Route? = null
         var bestError = Double.MAX_VALUE
@@ -1157,6 +1140,7 @@ class GenerateRouteUseCase @Inject constructor(
         attemptDiagnostics["fast_accept_tolerance_m"] = fastAcceptM.toInt()
 
         repeat(iterationLimit) {
+            coroutineContext.ensureActive()
             val rawPositions = generatePointsSequentially(
                 origin, segmentLengths.take(n), targetDistanceM, rng, segmentMinM, spacingM
             )
@@ -1201,14 +1185,17 @@ class GenerateRouteUseCase @Inject constructor(
                 )
                 bestRoute = candidate
                 emitRouteUpdate(candidate)
+                // First ratio-OK course wins — don't burn more OSRM calls hunting a slightly better fit.
+                return finalizeRoute(candidate)
             }
             if (overTargetAir) {
                 val shrink = (targetDistanceM / totalStraightLineM).coerceIn(0.75, 0.98)
                 segmentLengths = segmentLengths.map { it * shrink }
                 return@repeat
             }
-            if (underError <= fastAcceptM && !ratioRejection.rejected &&
-                (bestRoute != null || bestRouteFallback != null)
+            // After one usable routed draft, stop if close enough to target (even if ratio failed).
+            if (routeFetchSuccesses >= 1 && !overTargetAir &&
+                underError <= fastAcceptM.coerceAtLeast(targetDistanceM * 0.25)
             ) {
                 return finalizeRoute(
                     resolveGeneratedRoute(
@@ -1312,7 +1299,9 @@ class GenerateRouteUseCase @Inject constructor(
         totalStraightLineM: Double,
         osrmResult: OsrmRouteResponse?,
         destination: GeoPoint? = null,
-        fixedFlags: List<Boolean> = emptyList()
+        fixedFlags: List<Boolean> = emptyList(),
+        selected: List<CandidateObject?> = emptyList(),
+        onObjectFlags: List<Boolean> = emptyList()
     ): Route {
         val (polyline, estimatedDurationS) = when {
             osrmResult != null && osrmResult.code == "Ok" && osrmResult.routeList().isNotEmpty() -> {
@@ -1335,7 +1324,8 @@ class GenerateRouteUseCase @Inject constructor(
             id = routeId,
             origin = origin,
             snapped = snapped,
-            selected = emptyList(),
+            selected = selected,
+            onObjectFlags = onObjectFlags,
             distancesFromPrev = distancesFromPrev,
             polyline = polyline,
             targetDistanceM = targetDistanceM,
@@ -1347,6 +1337,10 @@ class GenerateRouteUseCase @Inject constructor(
         )
     }
 
+    /**
+     * Soft-focus road pins onto nearby pool objects when spacing allows; otherwise near-mode.
+     * [focusRadiusM] 0 forces near-only (path-fit fallback).
+     */
     private fun loopAirDistanceM(route: Route): Double =
         route.totalDistanceM.coerceAtLeast(0.0)
 
@@ -1484,21 +1478,33 @@ class GenerateRouteUseCase @Inject constructor(
         return PathToAirRejection(rejected = false, totalPathM = totalPath, totalAirM = totalStraightLineM)
     }
 
-    private suspend fun finalizeRoute(route: Route): Route =
-        if (OVERPASS_ENRICH_MISSING_LANDMARKS) enrichMissingLandmarksBatched(route) else route
+    private suspend fun finalizeRoute(route: Route): Route = route
+
+    private suspend fun enrichPostSuccess(
+        route: Route,
+        maxPathToAirRatio: Double,
+    ): Route {
+        val skipSnap = System.getProperty("orienteer.skipObjectSnap") == "true" ||
+            System.getenv("ORIENTEER_SKIP_OBJECT_SNAP") == "true"
+        if (skipSnap || !OVERPASS_ENRICH_MISSING_LANDMARKS) return route
+        return enrichMissingLandmarksBatched(route, maxPathToAirRatio)
+    }
 
     private fun computeRandomSegmentLengths(
         n: Int,
         targetM: Double,
         rng: Random,
-        segmentMinM: Double
-    ): List<Double> {
-        val lo = segmentMinM.coerceAtLeast(CheckpointCountPlanner.ABSOLUTE_MIN_LEG_M)
-        val hi = max(SEGMENT_MAX_M, lo + 1.0)
-        val raw = List(n) { lo + rng.nextDouble() * (hi - lo) }
-        val sum = raw.sum()
-        return raw.map { it * (targetM / sum) }
-    }
+        segmentMinM: Double,
+        maxPathToAirRatio: Double
+    ): List<Double> =
+        CheckpointCountPlanner.randomSegmentLengths(
+            segmentCount = n,
+            targetM = targetM,
+            segmentMinM = segmentMinM,
+            maxPathToAirRatio = maxPathToAirRatio,
+            rng = rng,
+            segmentMaxM = SEGMENT_MAX_M
+        )
 
     /** Absolute fast-accept band; scales down for short targets so 1 km loops are not ±500 m. */
     private fun fastAcceptToleranceM(targetM: Double): Double =
@@ -1524,12 +1530,15 @@ class GenerateRouteUseCase @Inject constructor(
             withTimeout(OVERPASS_TIMEOUT_MS) {
                 overpass.query(query).parseJson(gson, OverpassResponse::class.java).elements.toList()
             }
-        }.getOrElse { emptyList() }
+        }.getOrElse {
+            Log.w(TAG, "Overpass candidate fetch failed: ${it.message}")
+            emptyList()
+        }
         val candidates = elements.mapNotNull { e ->
             val point = e.coordinateOrNull() ?: return@mapNotNull null
             val tag = e.primaryTag ?: return@mapNotNull null
-            if (tag in EXCLUDED_PRIMARY_TAGS) return@mapNotNull null
-            val weight = TAG_WEIGHTS[tag] ?: 1.0
+            if (tag in OverpassLandmarkTags.EXCLUDED_PRIMARY_TAGS) return@mapNotNull null
+            val weight = OverpassLandmarkTags.tagWeight(tag)
             CandidateObject(point, e, weight)
         }.distinctBy { "${it.position.latitude},${it.position.longitude},${it.element.primaryTag}" }
 
@@ -1598,6 +1607,11 @@ class GenerateRouteUseCase @Inject constructor(
         val legFloor = (segmentMinM * 0.75).coerceAtLeast(CheckpointCountPlanner.ABSOLUTE_MIN_LEG_M)
 
         for ((index, segmentTargetM) in segmentLengths.withIndex()) {
+            coroutineContext.ensureActive()
+            if ((attemptDiagnostics["nearest_call_count"] as? Int ?: 0) >= MAX_NEAREST_CALLS_PER_ATTEMPT) {
+                attemptDiagnostics["rejection_gate"] = "nearest_budget"
+                return null
+            }
             var placed: GeoPoint? = null
             repeat(SNAP_RETRIES) { attempt ->
                 val bearing = pickSegmentBearing(
@@ -1798,6 +1812,12 @@ class GenerateRouteUseCase @Inject constructor(
     }
 
     private suspend fun snapOne(candidate: GeoPoint): GeoPoint? {
+        val nearestCalls = (attemptDiagnostics["nearest_call_count"] as? Int ?: 0) + 1
+        attemptDiagnostics["nearest_call_count"] = nearestCalls
+        if (nearestCalls > MAX_NEAREST_CALLS_PER_ATTEMPT) {
+            attemptDiagnostics["rejection_gate"] = "nearest_budget"
+            return null
+        }
         val response = osrmCall("nearest") {
             osrm.nearest(GeoUtils.toOsrmCoordinate(candidate))
                 .parseJson(gson, OsrmNearestResponse::class.java)
@@ -2080,7 +2100,7 @@ class GenerateRouteUseCase @Inject constructor(
         id: String,
         origin: GeoPoint,
         snapped: List<GeoPoint>,
-        selected: List<CandidateObject>,
+        selected: List<CandidateObject?>,
         distancesFromPrev: List<Double>,
         polyline: List<GeoPoint>,
         targetDistanceM: Double,
@@ -2088,7 +2108,8 @@ class GenerateRouteUseCase @Inject constructor(
         actualPathDistanceM: Double,
         estimatedDurationS: Double,
         destination: GeoPoint? = null,
-        fixedFlags: List<Boolean> = emptyList()
+        fixedFlags: List<Boolean> = emptyList(),
+        onObjectFlags: List<Boolean> = emptyList()
     ): Route {
         val oneWay = destination != null
         val checkpoints = buildList {
@@ -2106,8 +2127,14 @@ class GenerateRouteUseCase @Inject constructor(
                 )
             )
             snapped.forEachIndexed { idx, point ->
-                val (desc, name, tag) = if (selected.isNotEmpty() && idx < selected.size) {
-                    CheckpointDescriptionGenerator.generate(idx, listOf(selected[idx].element))
+                val landmark = selected.getOrNull(idx)
+                val onObject = onObjectFlags.getOrElse(idx) { landmark != null }
+                val (desc, name, tag) = if (landmark != null) {
+                    CheckpointDescriptionGenerator.generate(
+                        idx,
+                        listOf(landmark.element),
+                        onObject = onObject
+                    )
                 } else {
                     // Generic text; batched Overpass may replace when landmarkType is still null.
                     CheckpointDescriptionGenerator.generate(idx, emptyList())
@@ -2137,87 +2164,266 @@ class GenerateRouteUseCase @Inject constructor(
         ).withFinishCheckpoint(finishPosition = destination)
     }
 
-    /**
-     * Single Overpass round-trip for all controls missing [Checkpoint.landmarkType].
-     * Uses a padded bbox covering those points (not one query per control).
-     */
-    private suspend fun enrichMissingLandmarksBatched(route: Route): Route {
-        val needs = route.checkpoints.filter { !it.isStart && it.landmarkType.isNullOrBlank() }
-        if (needs.isEmpty()) return route
+    private suspend fun enrichMissingLandmarksBatched(
+        route: Route,
+        maxPathToAirRatio: Double,
+    ): Route {
+        return try {
+            withTimeout(SNAP_ENRICH_BUDGET_MS) {
+                enrichWithObjectSnapPlanner(route, maxPathToAirRatio)
+            }
+        } catch (_: TimeoutCancellationException) {
+            Log.w(TAG, "Object-snap enrich timed out; applying generic labels only")
+            applyGenericLandmarkLabels(route)
+        } catch (t: CancellationException) {
+            throw t
+        } catch (t: Throwable) {
+            Log.w(TAG, "Object-snap landmark enrich failed: ${t.message}")
+            applyGenericLandmarkLabels(route)
+        }
+    }
 
-        val lats = needs.map { it.position.latitude }
-        val lons = needs.map { it.position.longitude }
-        val padDeg = ENRICH_AROUND_RADIUS_M / 111_320.0
-        val south = (lats.minOrNull() ?: return route) - padDeg
-        val north = (lats.maxOrNull() ?: return route) + padDeg
-        val west = (lons.minOrNull() ?: return route) - padDeg
-        val east = (lons.maxOrNull() ?: return route) + padDeg
+    private fun applyGenericLandmarkLabels(route: Route): Route {
+        val labeled = route.checkpoints.map { cp ->
+            if (cp.isStart || !cp.landmarkType.isNullOrBlank()) return@map cp
+            cp.copy(
+                landmarkType = "generic=path_junction",
+                description = "Checkpoint ${cp.id}: Near path junction.",
+            )
+        }
+        return route.copy(checkpoints = labeled)
+    }
 
-        val elements = runCatching {
-            withTimeout(OVERPASS_TIMEOUT_MS) {
-                val query = buildBboxOverpassQuery(
-                    south = south,
-                    west = west,
-                    north = north,
-                    east = east,
-                    timeoutSec = 8,
-                    maxElements = ENRICH_MAX_ELEMENTS
+    private suspend fun enrichWithObjectSnapPlanner(
+        route: Route,
+        maxPathToAirRatio: Double,
+    ): Route {
+        val origin = route.checkpoints.firstOrNull()?.position ?: return route
+        val controlCheckpoints = route.checkpoints.filter { !it.isStart }
+        if (controlCheckpoints.isEmpty()) return route
+
+        val cache = pointObjectCache ?: PointObjectCache(
+            File(System.getProperty("java.io.tmpdir"), "orienteer-point-objects"),
+            gson = gson,
+        )
+
+        val byCell = try {
+            withTimeout(SNAP_FETCH_BUDGET_MS) {
+                cache.objectsNear(controlCheckpoints.map { it.position }) { missing ->
+                    fetchPointObjectCacheShard(cache, missing)
+                }
+            }
+        } catch (_: TimeoutCancellationException) {
+            emptyMap()
+        }
+
+        val landmarkNames = mutableMapOf<Int, String?>()
+        val requests = controlCheckpoints.mapIndexed { index, cp ->
+            val cellKey = cache.cellKey(cp.position.latitude, cp.position.longitude)
+            val elements = byCell[cellKey].orEmpty()
+            var ranked = NearCheckpointOverpassEnrich.rankedWhitelistedNear(
+                cp.position,
+                elements,
+                excludeDense = true,
+            )
+            if (ranked.isEmpty()) {
+                ranked = NearCheckpointOverpassEnrich.rankedWhitelistedNear(
+                    cp.position,
+                    elements,
+                    excludeDense = false,
                 )
+            }
+            landmarkNames[index] = ranked.firstOrNull()?.displayName
+            ControlSnapRequest(
+                index = index,
+                anchor = cp.position,
+                candidates = ranked.mapNotNull { element ->
+                    val pos = element.coordinateOrNull() ?: return@mapNotNull null
+                    val tag = element.primaryTag ?: return@mapNotNull null
+                    SnapObjectCandidate(pos, tag, element.displayName)
+                },
+            )
+        }
+
+        val destination = if (route.isOneWayCourse) route.checkpoints.last().position else null
+        val endPoint = destination ?: origin
+        suspend fun measurePathM(outcomes: List<ControlSnapOutcome>): Double {
+            // Fast estimate during ratio reverts — one real OSRM pass happens after planning.
+            val positions = outcomes.sortedBy { it.index }.map { it.position }
+            var airSum = 0.0
+            var prev = origin
+            for (p in positions) {
+                airSum += GeoUtils.distanceMeters(prev, p)
+                prev = p
+            }
+            airSum += GeoUtils.distanceMeters(prev, endPoint)
+            return airSum * SNAP_PATH_ESTIMATE_FACTOR
+        }
+
+        val plan = ObjectSnapPlanner.planSnaps(
+            controls = requests,
+            airDistanceM = loopAirDistanceM(route).coerceAtLeast(1.0),
+            maxPathToAirRatio = maxPathToAirRatio,
+            measurePathM = ::measurePathM,
+        )
+
+        val outcomeByIndex = plan.outcomes.associateBy { it.index }
+        val labeledCheckpoints = route.checkpoints.map { cp ->
+            if (cp.isStart) return@map cp
+            val index = controlCheckpoints.indexOfFirst { it.id == cp.id }
+            if (index < 0) return@map cp
+            val outcome = outcomeByIndex[index] ?: return@map cp
+            cp.copy(
+                position = outcome.position,
+                description = outcome.description,
+                landmarkType = outcome.landmarkType,
+                landmarkName = landmarkNames[index],
+            )
+        }
+
+        val positions = controlCheckpoints.indices.map { index ->
+            outcomeByIndex[index]?.position ?: controlCheckpoints[index].position
+        }
+        val routed = if (destination != null) {
+            fetchRoutedOpen(origin, positions, destination)
+        } else {
+            fetchRoutedLoop(origin, positions)
+        } ?: return route.copy(checkpoints = labeledCheckpoints)
+
+        val osrmResult = routed.osrmResult
+        val pathM = when {
+            osrmResult.code == "Ok" && osrmResult.routeList().isNotEmpty() ->
+                osrmResult.routeList().first().distance
+            else -> return route.copy(checkpoints = labeledCheckpoints)
+        }
+        val airM = loopAirDistanceM(route).coerceAtLeast(1.0)
+        if (pathM > airM * maxPathToAirRatio) {
+            // Keep accepted road geometry; apply Near labels without moving controls.
+            val labeledOnly = route.checkpoints.map { cp ->
+                if (cp.isStart) return@map cp
+                val index = controlCheckpoints.indexOfFirst { it.id == cp.id }
+                if (index < 0) return@map cp
+                val outcome = outcomeByIndex[index] ?: return@map cp
+                val nearDescription = outcome.description
+                    .replace(": At ", ": Near ")
+                    .replace(" At ", " Near ")
+                cp.copy(
+                    description = nearDescription,
+                    landmarkType = outcome.landmarkType ?: "generic=path_junction",
+                    landmarkName = landmarkNames[index],
+                )
+            }
+            return route.copy(checkpoints = labeledOnly)
+        }
+
+        val snapped = routed.checkpointPositions
+        val (polyline, estimatedDurationS) = when {
+            osrmResult.code == "Ok" && osrmResult.routeList().isNotEmpty() -> {
+                val r = osrmResult.routeList().first()
+                val geometry = r.geometry
+                if (geometry != null) {
+                    simplifyPolyline(geometry.toGeoPoints()) to r.duration
+                } else {
+                    fallbackPolylineAndDuration(origin, snapped, destination)
+                }
+            }
+            else -> fallbackPolylineAndDuration(origin, snapped, destination)
+        }
+
+        val distancesFromPrev = if (destination != null) {
+            computeDistancesFromPrevOpen(origin, snapped, destination)
+        } else {
+            computeDistancesFromPrev(origin, snapped)
+        }
+
+        var snapIdx = 0
+        val finalCheckpoints = labeledCheckpoints.map { cp ->
+            if (cp.isStart) return@map cp
+            val index = controlCheckpoints.indexOfFirst { it.id == cp.id }
+            if (index < 0 || snapIdx >= snapped.size) return@map cp
+            val updated = cp.copy(
+                position = snapped[snapIdx],
+                distanceFromPrev = distancesFromPrev.getOrElse(snapIdx) { cp.distanceFromPrev },
+            )
+            snapIdx++
+            updated
+        }.let { cps ->
+            if (!route.hasTrailingFinish) return@let cps
+            val lastLeg = distancesFromPrev.lastOrNull() ?: cps.last().distanceFromPrev
+            cps.mapIndexed { idx, cp ->
+                if (idx == cps.lastIndex && cp.isStart) cp.copy(distanceFromPrev = lastLeg) else cp
+            }
+        }
+
+        return route.copy(
+            checkpoints = finalCheckpoints,
+            polylinePoints = polyline,
+            actualPathDistanceM = pathM,
+            estimatedDurationS = estimatedDurationS,
+            totalDistanceM = distancesFromPrev.sum(),
+        )
+    }
+
+    private suspend fun fetchPointObjectCacheShard(
+        cache: PointObjectCache,
+        missing: List<GeoPoint>,
+    ): Map<String, List<OverpassElement>> {
+        val byKey = mutableMapOf<String, MutableList<OverpassElement>>()
+        for (group in NearCheckpointOverpassEnrich.shard(missing)) {
+            val query = NearCheckpointOverpassEnrich.buildNearCheckpointsOverpassQuery(
+                group,
+                radiusM = CACHE_FETCH_AROUND_M,
+                timeoutSec = 8,
+            )
+            val elements = NearCheckpointOverpassEnrich.fetchShardWithRetry({ delay(it) }) {
                 overpass.query(query).parseJson(gson, OverpassResponse::class.java).elements.toList()
             }
-        }.getOrElse {
-            Log.w(TAG, "Batched landmark enrich failed: ${it.message}")
-            emptyList()
-        }
-        if (elements.isEmpty()) return route
-
-        val enriched = route.checkpoints.map { cp ->
-            if (cp.isStart || !cp.landmarkType.isNullOrBlank()) return@map cp
-            val ranked = rankElementsNear(cp.position, elements)
-                .filter { e ->
-                    val coord = e.coordinateOrNull() ?: return@filter false
-                    GeoUtils.distanceMeters(cp.position, coord) <= ENRICH_AROUND_RADIUS_M
+            for (point in group) {
+                val key = cache.cellKey(point.latitude, point.longitude)
+                val near = elements.filter { element ->
+                    val coord = element.coordinateOrNull() ?: return@filter false
+                    GeoUtils.distanceMeters(point, coord) <= CACHE_ELEMENT_ASSIGN_RADIUS_M
                 }
-            if (ranked.isEmpty()) return@map cp
-            // generate() uses 0-based index for "Checkpoint N" display.
-            val (desc, name, tag) = CheckpointDescriptionGenerator.generate(cp.id - 1, ranked)
-            cp.copy(description = desc, landmarkName = name, landmarkType = tag)
+                val bucket = byKey.getOrPut(key) { mutableListOf() }
+                bucket.addAll(near)
+            }
         }
-        return route.copy(checkpoints = enriched)
+        return byKey.mapValues { (_, values) ->
+            values.distinctBy { "${it.type}:${it.id}" }
+        }
     }
 
     private fun buildCandidateOverpassQuery(lat: Double, lon: Double, radiusM: Int): String =
-        buildAreaOverpassQuery(lat, lon, radiusM = radiusM, timeoutSec = 7, maxElements = 64)
+        buildAreaOverpassQuery(
+            lat,
+            lon,
+            radiusM = radiusM,
+            timeoutSec = 8,
+            maxElements = CANDIDATE_MAX_ELEMENTS
+        )
 
-    private fun buildBboxOverpassQuery(
-        south: Double,
-        west: Double,
-        north: Double,
-        east: Double,
-        timeoutSec: Int,
-        maxElements: Int
-    ): String {
-        val bbox = "$south,$west,$north,$east"
-        val poiLines = listOf(
-            "nwr[\"historic\"~\"monument|memorial|statue|ruins|wayside_cross|archaeological_site|castle|fort|boundary_stone\"]($bbox);",
-            "nwr[\"tourism\"~\"viewpoint|artwork|information|picnic_site|clock\"]($bbox);",
-            "nwr[\"amenity\"~\"bench|fountain|shelter|drinking_water|post_box|waste_basket|telephone\"]($bbox);",
-            "nwr[\"natural\"~\"peak|rock|spring|tree\"]($bbox);",
-            "nwr[\"man_made\"~\"tower|water_tower|windmill|cross|survey_point|obelisk\"]($bbox);",
-            "nwr[\"leisure\"~\"playground|picnic_table|fitness_station|garden\"]($bbox);",
-            "nwr[\"barrier\"=\"bollard\"]($bbox);",
-            "node[\"highway\"~\"bus_stop|street_lamp|traffic_signals|crossing|mini_roundabout\"]($bbox);"
-        ).joinToString("\n") { "  $it" }
-        return """
-            [out:json][timeout:$timeoutSec];
-            (
-            $poiLines
-            );
-            out center tags $maxElements;
-        """.trimIndent()
-    }
+    /**
+     * Distinctive Street-O + forest/park control objects.
+     * Omits ultra-dense city tags (street lamps, power poles, long fences) that otherwise
+     * fill the Overpass result cap and leave most controls with nothing useful.
+     * Spatial filter is `around:r,lat,lon`.
+     */
+    private fun overpassPoiFilters(spatial: String): List<String> = listOf(
+        "nwr[\"historic\"~\"monument|memorial|statue|ruins|wayside_cross|archaeological_site|castle|fort|boundary_stone\"]($spatial);",
+        "nwr[\"tourism\"~\"viewpoint|artwork|information|picnic_site|clock|wilderness_hut|alpine_hut\"]($spatial);",
+        "nwr[\"amenity\"~\"bench|fountain|shelter|drinking_water|post_box|waste_basket|telephone\"]($spatial);",
+        "nwr[\"natural\"~\"peak|saddle|rock|stone|spring|tree|cliff|cave_entrance\"]($spatial);",
+        "nwr[\"waterway\"~\"waterfall|dam\"]($spatial);",
+        "nwr[\"landuse\"=\"quarry\"]($spatial);",
+        "nwr[\"man_made\"~\"tower|water_tower|windmill|cross|survey_point|obelisk|bridge|cairn|hunting_stand|flagpole|mast|pier|embankment|water_well\"]($spatial);",
+        "nwr[\"leisure\"~\"playground|picnic_table|fitness_station|garden\"]($spatial);",
+        "nwr[\"barrier\"~\"bollard|gate|stile|ditch\"]($spatial);",
+        "nwr[\"power\"=\"tower\"]($spatial);",
+        "nwr[\"building\"~\"hut|cabin|church|chapel|shed|ruins\"]($spatial);",
+        "node[\"highway\"~\"bus_stop|mini_roundabout|steps|ford\"]($spatial);"
+    )
 
-    /** Targeted OSM features common on Street-O / urban orienteering maps (not broad amenity=*). */
+    /** Targeted OSM features for Street-O and forest/park orienteering. */
     private fun buildAreaOverpassQuery(
         lat: Double,
         lon: Double,
@@ -2226,16 +2432,7 @@ class GenerateRouteUseCase @Inject constructor(
         maxElements: Int
     ): String {
         val around = "around:$radiusM,$lat,$lon"
-        val poiLines = listOf(
-            "nwr[\"historic\"~\"monument|memorial|statue|ruins|wayside_cross|archaeological_site|castle|fort|boundary_stone\"]($around);",
-            "nwr[\"tourism\"~\"viewpoint|artwork|information|picnic_site|clock\"]($around);",
-            "nwr[\"amenity\"~\"bench|fountain|shelter|drinking_water|post_box|waste_basket|telephone\"]($around);",
-            "nwr[\"natural\"~\"peak|rock|spring|tree\"]($around);",
-            "nwr[\"man_made\"~\"tower|water_tower|windmill|cross|survey_point|obelisk\"]($around);",
-            "nwr[\"leisure\"~\"playground|picnic_table|fitness_station|garden\"]($around);",
-            "nwr[\"barrier\"=\"bollard\"]($around);",
-            "node[\"highway\"~\"bus_stop|street_lamp|traffic_signals|crossing|mini_roundabout\"]($around);"
-        ).joinToString("\n") { "  $it" }
+        val poiLines = overpassPoiFilters(around).joinToString("\n") { "  $it" }
         return """
             [out:json][timeout:$timeoutSec];
             (
@@ -2245,13 +2442,4 @@ class GenerateRouteUseCase @Inject constructor(
         """.trimIndent()
     }
 
-    private fun rankElementsNear(anchor: GeoPoint, elements: List<OverpassElement>): List<OverpassElement> =
-        elements
-            .mapNotNull { e -> e.coordinateOrNull()?.let { coord -> e to GeoUtils.distanceMeters(anchor, coord) } }
-            .filter { (e, _) -> e.primaryTag != null }
-            .sortedWith(
-                compareBy<Pair<OverpassElement, Double>> { it.second }
-                    .thenByDescending { (e, _) -> TAG_WEIGHTS[e.primaryTag] ?: 1.0 }
-            )
-            .map { it.first }
 }

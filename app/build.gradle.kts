@@ -38,8 +38,8 @@ android {
         applicationId = "com.orienteer.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 29
-        versionName = "1.3.24"
+        versionCode = 35
+        versionName = "1.3.30"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -117,6 +117,10 @@ android {
                 ?: System.getenv("ORIENTEER_ROUTE_MATRIX")
                 ?: ""
             it.systemProperty("orienteer.routeMatrix", matrixFlag)
+            val skipSnap = System.getProperty("orienteer.skipObjectSnap")
+                ?: System.getenv("ORIENTEER_SKIP_OBJECT_SNAP")
+                ?: ""
+            it.systemProperty("orienteer.skipObjectSnap", skipSnap)
         }
     }
 }
@@ -194,4 +198,5 @@ dependencies {
     // Unit tests
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }

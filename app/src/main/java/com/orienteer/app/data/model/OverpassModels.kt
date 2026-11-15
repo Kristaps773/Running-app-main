@@ -20,9 +20,7 @@ data class OverpassElement(
 ) {
     /** Human-readable tag like "amenity=bench" or "historic=monument". */
     val primaryTag: String?
-        get() = tags?.entries
-            ?.firstOrNull { (k, _) -> k in INTERESTING_KEYS }
-            ?.let { (k, v) -> "$k=$v" }
+        get() = OverpassLandmarkTags.primaryTagFromTags(tags)
 
     val displayName: String?
         get() = tags?.get("name")
@@ -38,6 +36,7 @@ data class OverpassElement(
         val INTERESTING_KEYS = setOf(
             "amenity", "historic", "tourism", "natural",
             "leisure", "man_made", "barrier", "highway",
+            "waterway", "power", "building", "landuse",
             "shop", "craft", "sport"
         )
     }
