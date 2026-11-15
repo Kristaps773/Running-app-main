@@ -158,6 +158,36 @@ object OrienteerIcons {
         }
     }
 
+    val Add: ImageVector by lazy {
+        materialIcon("Add") {
+            moveTo(19f, 13f)
+            horizontalLineToRelative(-6f)
+            verticalLineToRelative(6f)
+            horizontalLineToRelative(-2f)
+            verticalLineToRelative(-6f)
+            horizontalLineTo(5f)
+            verticalLineToRelative(-2f)
+            horizontalLineToRelative(6f)
+            verticalLineTo(5f)
+            horizontalLineToRelative(2f)
+            verticalLineToRelative(6f)
+            horizontalLineToRelative(6f)
+            verticalLineToRelative(2f)
+            close()
+        }
+    }
+
+    val Remove: ImageVector by lazy {
+        materialIcon("Remove") {
+            moveTo(19f, 13f)
+            horizontalLineTo(5f)
+            verticalLineToRelative(-2f)
+            horizontalLineToRelative(14f)
+            verticalLineToRelative(2f)
+            close()
+        }
+    }
+
     val MyLocation: ImageVector by lazy {
         materialIcon("MyLocation") {
             moveTo(12f, 8f)

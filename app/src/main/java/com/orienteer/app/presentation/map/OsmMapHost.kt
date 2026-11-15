@@ -163,6 +163,7 @@ fun OsmMapHost(
                     applyBasemapStyle(this, ctx, basemapStyle)
                     setTag(R.id.map_tag_basemap_style, basemapStyle.name)
                     setTag(R.id.map_tag_route_overlay_key, overlayFingerprint)
+                    disableBuiltInZoomButtons()
                     setMultiTouchControls(interactive)
                     isClickable = interactive
                     isFocusable = interactive
@@ -347,6 +348,7 @@ fun OsmReplayMapHost(
             factory = { ctx ->
                 MapView(ctx).apply {
                     setTileSource(TileSourceFactory.MAPNIK)
+                    disableBuiltInZoomButtons()
                     setMultiTouchControls(true)
                     controller.setZoom(14.0)
                     controller.setCenter(

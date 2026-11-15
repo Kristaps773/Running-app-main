@@ -30,9 +30,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import com.orienteer.app.ui.icons.OrienteerIcons
@@ -62,7 +63,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -72,12 +76,16 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orienteer.app.R
+import com.orienteer.app.presentation.setup.CustomDistanceInput
+import com.orienteer.app.ui.theme.ActionTypography
 import com.orienteer.app.ui.theme.BrandForest
 import com.orienteer.app.ui.theme.OrienteerBottomSheetShape
 import com.orienteer.app.ui.theme.OrienteerCardShape
@@ -198,7 +206,7 @@ fun PrimaryGreenButton(
             Icon(leadingIcon, contentDescription = null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
         }
-        Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(text, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -277,6 +285,8 @@ fun DistanceStatCard(
     value: String,
     modifier: Modifier = Modifier,
     emphasized: Boolean = false,
+    /** Tighter padding + smaller value type for route-preview sheet density. */
+    compact: Boolean = false,
     /** Shown inline after [value] in smaller type, e.g. "(1.1× air)". */
     valueSuffix: String? = null
 ) {
@@ -287,23 +297,34 @@ fun DistanceStatCard(
     }
     val valueColor = if (emphasized) MaterialTheme.colorScheme.onPrimaryContainer
     else MaterialTheme.colorScheme.onSurface
+    val labelColor = if (emphasized) {
+        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
     val suffixStyle = MaterialTheme.typography.labelSmall.copy(
         fontWeight = FontWeight.Medium,
         color = valueColor.copy(alpha = 0.82f)
     )
+    val valueStyle = if (compact) {
+        MaterialTheme.typography.titleLarge
+    } else {
+        MaterialTheme.typography.headlineMedium
+    }
+    val pad = if (compact) OrienteerSpacing.sm else OrienteerSpacing.md
     Column(
         modifier = modifier
             .clip(OrienteerCardShape)
             .background(bg)
-            .padding(OrienteerSpacing.md),
+            .padding(horizontal = pad, vertical = if (compact) OrienteerSpacing.xs else pad),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             text = label.uppercase(),
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = labelColor
         )
-        Spacer(Modifier.height(OrienteerSpacing.xxs))
+        Spacer(Modifier.height(if (compact) 2.dp else OrienteerSpacing.xxs))
         Text(
             text = buildAnnotatedString {
                 append(value)
@@ -319,7 +340,7 @@ fun DistanceStatCard(
                     }
                 }
             },
-            style = MaterialTheme.typography.headlineMedium,
+            style = valueStyle,
             fontWeight = FontWeight.Bold,
             color = valueColor,
             maxLines = 1,
@@ -527,6 +548,9 @@ fun StitchBackground(modifier: Modifier = Modifier, content: @Composable BoxScop
     )
 }
 
+/** Shared height for preset chips and the custom-km field (no card jump). */
+val DistanceChipHeight = ActionTypography.DistanceChipHeightDp.dp
+
 @Composable
 fun DistanceChip(
     label: String,
@@ -537,7 +561,7 @@ fun DistanceChip(
     val shape = OrienteerChipShape
     Surface(
         onClick = onClick,
-        modifier = modifier.height(OrienteerSpacing.minTouch - 2.dp),
+        modifier = modifier.height(DistanceChipHeight),
         shape = shape,
         color = if (selected) {
             BrandForest
@@ -557,15 +581,6 @@ fun DistanceChip(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (selected) {
-                Icon(
-                    Icons.Default.Check,
-                    contentDescription = null,
-                    modifier = Modifier.size(14.dp),
-                    tint = Color.White
-                )
-                Spacer(Modifier.width(4.dp))
-            }
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelLarge,
@@ -581,6 +596,79 @@ fun DistanceChip(
     }
 }
 
+/**
+ * Custom km entry matching [DistanceChip] size and selected forest look.
+ */
+@Composable
+fun DistanceOtherField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    requestFocus: Boolean = true
+) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(requestFocus) {
+        if (requestFocus) focusRequester.requestFocus()
+    }
+    Surface(
+        modifier = modifier.height(DistanceChipHeight),
+        shape = OrienteerChipShape,
+        color = BrandForest,
+        border = androidx.compose.foundation.BorderStroke(1.dp, BrandForest)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = OrienteerSpacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            BasicTextField(
+                value = value,
+                onValueChange = { text ->
+                    onValueChange(CustomDistanceInput.sanitize(text))
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focusRequester),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.labelLarge.copy(
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
+                ),
+                cursorBrush = SolidColor(Color.White),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Decimal,
+                    imeAction = ImeAction.Done
+                ),
+                decorationBox = { inner ->
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (value.isEmpty()) {
+                            Text(
+                                text = "0.0",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Color.White.copy(alpha = 0.45f)
+                            )
+                        }
+                        inner()
+                    }
+                }
+            )
+            Text(
+                text = "km",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Medium,
+                color = Color.White.copy(alpha = 0.85f),
+                modifier = Modifier.padding(start = OrienteerSpacing.xxs)
+            )
+        }
+    }
+}
+
 @Composable
 fun GhostTextButton(
     text: String,
@@ -590,10 +678,10 @@ fun GhostTextButton(
 ) {
     TextButton(onClick = onClick, modifier = modifier) {
         Text(
-            text = text.uppercase(),
+            text = text,
             style = MaterialTheme.typography.labelMedium,
-            color = contentColor,
-            letterSpacing = 0.8.sp
+            fontWeight = FontWeight.SemiBold,
+            color = contentColor
         )
     }
 }

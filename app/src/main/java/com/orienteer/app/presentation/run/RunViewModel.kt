@@ -8,6 +8,7 @@ import android.os.IBinder
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.orienteer.app.BuildConfig
 import com.orienteer.app.data.local.ActiveRunStore
 import com.orienteer.app.data.local.BasemapStyle
 import com.orienteer.app.data.local.MapDisplayPreferences
@@ -16,6 +17,8 @@ import com.orienteer.app.data.model.GeoPoint
 import com.orienteer.app.data.model.Route
 import com.orienteer.app.data.model.RunSession
 import com.orienteer.app.data.repository.RouteRepository
+import com.orienteer.app.debug.ScreenshotDemoMode
+import com.orienteer.app.debug.ScreenshotDemoSeeder
 import com.orienteer.app.domain.RunPathLeadMode
 import com.orienteer.app.domain.RoutePolylineProgress
 import com.orienteer.app.domain.usecase.LiveFootpathGuidanceUseCase
@@ -133,6 +136,12 @@ class RunViewModel @Inject constructor(
     init {
         loadRoute()
         viewModelScope.launch {
+            if (BuildConfig.DEBUG && ScreenshotDemoMode.useFakeActiveRun &&
+                routeId == ScreenshotDemoMode.ROUTE_ID
+            ) {
+                // Fake mid-run UI for store screenshots — do not start FGS.
+                return@launch
+            }
             if (activeRunStore.readActiveRouteId() == routeId) {
                 _uiState.value = _uiState.value.copy(isRunning = true)
                 bindTrackingService()
@@ -143,6 +152,21 @@ class RunViewModel @Inject constructor(
     private fun loadRoute() {
         viewModelScope.launch {
             val route = routeRepository.getRoute(routeId)
+            if (BuildConfig.DEBUG && ScreenshotDemoMode.useFakeActiveRun &&
+                route != null && routeId == ScreenshotDemoMode.ROUTE_ID
+            ) {
+                val fake = ScreenshotDemoSeeder.fakeMidRunSession(route)
+                _uiState.value = _uiState.value.copy(
+                    route = route,
+                    session = fake,
+                    isRunning = true,
+                    isPaused = false,
+                    isFinished = false,
+                    liveGuidancePolyline = route.polylinePoints,
+                    error = null
+                )
+                return@launch
+            }
             _uiState.value = _uiState.value.copy(
                 route = route,
                 liveGuidancePolyline = route?.polylinePoints.orEmpty(),

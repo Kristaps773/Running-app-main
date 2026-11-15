@@ -5,8 +5,8 @@ package com.orienteer.app.presentation.setup
  * so the home screen fits without scrolling on typical phones.
  * Values stay on the 8pt grid (4pt fine adjustments only where needed).
  *
- * Brand chrome is title-only (no hero icon) — DESIGN.md mobile compact + sticky CTA;
- * the dual checkpoint sliders need that vertical budget.
+ * Brand chrome is title-only (no hero icon) — DESIGN.md mobile compact + sticky CTA.
+ * Favorites and estimate strip live off this screen (Favorites list + route preview).
  */
 data class SetupLayoutMetrics(
     val topSpacerDp: Float,
@@ -18,8 +18,6 @@ data class SetupLayoutMetrics(
     val bottomContentPadDp: Float,
     /** Show tagline under brand title (tall viewports only). */
     val showTagline: Boolean,
-    /** Estimate chips under checkpoints — drop on short/mid phones to keep Settings visible. */
-    val showEstimateStrip: Boolean,
 )
 
 fun setupLayoutMetrics(availableHeightDp: Float): SetupLayoutMetrics {
@@ -34,7 +32,6 @@ fun setupLayoutMetrics(availableHeightDp: Float): SetupLayoutMetrics {
             afterInfoSpacerDp = 6f,
             bottomContentPadDp = 4f,
             showTagline = false,
-            showEstimateStrip = false,
         )
         h < 760f -> SetupLayoutMetrics(
             topSpacerDp = 6f,
@@ -45,7 +42,6 @@ fun setupLayoutMetrics(availableHeightDp: Float): SetupLayoutMetrics {
             afterInfoSpacerDp = 8f,
             bottomContentPadDp = 6f,
             showTagline = false,
-            showEstimateStrip = false,
         )
         else -> SetupLayoutMetrics(
             topSpacerDp = 10f,
@@ -56,7 +52,6 @@ fun setupLayoutMetrics(availableHeightDp: Float): SetupLayoutMetrics {
             afterInfoSpacerDp = 10f,
             bottomContentPadDp = 8f,
             showTagline = true,
-            showEstimateStrip = true,
         )
     }
 }

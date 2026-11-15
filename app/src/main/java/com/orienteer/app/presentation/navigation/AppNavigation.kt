@@ -30,18 +30,21 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.orienteer.app.debug.ScreenshotDemoMode
 import com.orienteer.app.presentation.history.HistoryReplayMapScreen
 import com.orienteer.app.presentation.history.HistoryScreen
 import com.orienteer.app.presentation.map.MapScreen
 import com.orienteer.app.presentation.run.RunScreen
 import com.orienteer.app.presentation.settings.SettingsScreen
 import com.orienteer.app.presentation.setup.EndpointPickerScreen
+import com.orienteer.app.presentation.setup.FavoritesScreen
 import com.orienteer.app.presentation.setup.SetupScreen
 import com.orienteer.app.presentation.setup.SetupViewModel
 
 sealed class Screen(val route: String) {
     data object Setup : Screen("setup")
     data object EndpointPicker : Screen("setup/endpoints")
+    data object Favorites : Screen("favorites")
     data object Map : Screen("map/{routeId}") {
         fun createRoute(routeId: String) = "map/$routeId"
     }
@@ -63,6 +66,7 @@ fun AppNavigation(
     hasLocationPermission: Boolean,
     onRequestLocationPermission: () -> Unit,
     startAtHistory: Boolean = false,
+    screenshotScene: String? = null,
     openActiveRunRouteId: String? = null,
     onConsumedOpenActiveRun: () -> Unit = {}
 ) {
@@ -76,11 +80,32 @@ fun AppNavigation(
     val showActiveBanner = activeRouteId != null && !hideActiveBanner
     // Always start at Setup so SetupViewModel stays on the back stack for History reuse.
     val startDestination = Screen.Setup.route
+    val demoRouteId = ScreenshotDemoMode.ROUTE_ID
 
-    LaunchedEffect(startAtHistory) {
-        if (startAtHistory) {
-            navController.navigate(Screen.History.route) {
-                launchSingleTop = true
+    LaunchedEffect(startAtHistory, screenshotScene) {
+        when {
+            screenshotScene.equals("map", ignoreCase = true) -> {
+                navController.navigate(Screen.Map.createRoute(demoRouteId)) {
+                    launchSingleTop = true
+                }
+            }
+            screenshotScene.equals("run", ignoreCase = true) -> {
+                // openActiveRunRouteId LaunchedEffect also handles run; keep one path.
+            }
+            startAtHistory || screenshotScene.equals("history", ignoreCase = true) -> {
+                navController.navigate(Screen.History.route) {
+                    launchSingleTop = true
+                }
+            }
+            screenshotScene.equals("settings", ignoreCase = true) -> {
+                navController.navigate(Screen.Settings.route) {
+                    launchSingleTop = true
+                }
+            }
+            screenshotScene.equals("favorites", ignoreCase = true) -> {
+                navController.navigate(Screen.Favorites.route) {
+                    launchSingleTop = true
+                }
             }
         }
     }
@@ -107,12 +132,32 @@ fun AppNavigation(
                         navController.navigate(Screen.Map.createRoute(routeId))
                     },
                     onOpenHistory = { navController.navigate(Screen.History.route) },
+                    onOpenFavorites = { navController.navigate(Screen.Favorites.route) },
                     onOpenSettings = { navController.navigate(Screen.Settings.route) },
                     onOpenEndpointPicker = {
                         navController.navigate(Screen.EndpointPicker.route)
                     },
                     hasLocationPermission = hasLocationPermission,
                     onRequestLocationPermission = onRequestLocationPermission
+                )
+            }
+
+            composable(Screen.Favorites.route) {
+                val setupEntry = remember(navController) {
+                    runCatching { navController.getBackStackEntry(Screen.Setup.route) }.getOrNull()
+                }
+                val setupViewModel: SetupViewModel? = setupEntry?.let { hiltViewModel(it) }
+                if (setupViewModel == null) {
+                    LaunchedEffect(Unit) { navController.popBackStack() }
+                    return@composable
+                }
+                val favorites by setupViewModel.favoriteCoursePoints.collectAsStateWithLifecycle()
+                FavoritesScreen(
+                    favoriteSets = favorites,
+                    onApplyFavorite = setupViewModel::applyCoursePointsSet,
+                    onRemoveFavorite = setupViewModel::removeFavoriteCoursePoints,
+                    onRenameFavorite = setupViewModel::renameFavoriteCoursePoints,
+                    onNavigateBack = { navController.popBackStack() }
                 )
             }
 
@@ -130,14 +175,26 @@ fun AppNavigation(
                 val lockedCheckpoints by setupViewModel.lockedCheckpoints.collectAsStateWithLifecycle()
                 val lockedAnyOrder by setupViewModel.lockedAnyOrder.collectAsStateWithLifecycle()
                 val mapDisplay by setupViewModel.mapDisplayPreferences.collectAsStateWithLifecycle()
-                val recent by setupViewModel.recentCoursePoints.collectAsStateWithLifecycle()
+                val mapPrefsLoaded by setupViewModel.mapPrefsLoaded.collectAsStateWithLifecycle()
                 val favorites by setupViewModel.favoriteCoursePoints.collectAsStateWithLifecycle()
+                if (!mapPrefsLoaded) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "Loading map…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    return@composable
+                }
                 EndpointPickerScreen(
                     initialStart = customStart,
                     initialFinish = customFinish,
                     initialLocked = lockedCheckpoints,
                     initialAnyOrder = lockedAnyOrder,
-                    recentSets = recent,
                     favoriteSets = favorites,
                     basemapStyle = mapDisplay.basemapStyle,
                     useIofCourseOverprint = mapDisplay.useIofCourseOverprint,
@@ -146,9 +203,8 @@ fun AppNavigation(
                     onApplySavedSet = { set ->
                         setupViewModel.applyCoursePointsSet(set)
                     },
-                    onDeleteRecent = setupViewModel::removeRecentCoursePoints,
                     onDeleteFavorite = setupViewModel::removeFavoriteCoursePoints,
-                    onSaveFavorite = { setupViewModel.saveActiveToFavorites() },
+                    onSaveFavorite = { set -> setupViewModel.saveSetToFavorites(set) },
                     onReplaceFavorite = { removeId, set ->
                         setupViewModel.replaceFavoriteCoursePoints(removeId, set)
                     },
@@ -247,7 +303,15 @@ fun AppNavigation(
                         }
                     },
                     onSaveRouteToFavorites = { route ->
-                        setupViewModel?.saveRoutePinsToFavorites(route)
+                        val vm = setupViewModel
+                            ?: error("Setup unavailable — open Setup once, then try again")
+                        vm.saveRoutePinsToFavorites(route)
+                    },
+                    onFavoriteSetFromRoute = { route ->
+                        setupViewModel?.favoriteSetFromRoute(route)
+                    },
+                    onReplaceFavorite = { removeId, set ->
+                        setupViewModel?.replaceFavoriteCoursePoints(removeId, set)
                     }
                 )
             }

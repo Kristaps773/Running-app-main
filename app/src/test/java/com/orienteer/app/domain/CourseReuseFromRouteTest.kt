@@ -14,6 +14,7 @@ class CourseReuseFromRouteTest {
     private val start = GeoPoint(56.95, 24.10)
     private val midA = GeoPoint(56.955, 24.105)
     private val midB = GeoPoint(56.960, 24.110)
+    private val midC = GeoPoint(56.962, 24.112)
     private val finishAway = GeoPoint(56.97, 24.15)
 
     private fun cp(
@@ -24,7 +25,7 @@ class CourseReuseFromRouteTest {
     ) = Checkpoint(
         id = id,
         position = pos,
-        description = "cp$id",
+        description = "control$id",
         isStart = isStart,
         isFixed = isFixed
     )
@@ -43,16 +44,17 @@ class CourseReuseFromRouteTest {
     }
 
     @Test
-    fun fromRoute_loop_locksAllIntermediates_notOnlyFixed() {
+    fun fromRoute_withoutSnapshot_usesOnlyFixedPins() {
         val route = Route(
             id = "loop",
             checkpoints = listOf(
                 cp(0, start, isStart = true),
                 cp(1, midA, isFixed = true),
                 cp(2, midB, isFixed = false),
-                cp(3, start, isStart = true)
+                cp(3, midC, isFixed = false),
+                cp(4, start, isStart = true)
             ),
-            polylinePoints = listOf(start, midA, midB, start),
+            polylinePoints = listOf(start, midA, midB, midC, start),
             targetDistanceM = 6_000.0,
             totalDistanceM = 5_500.0,
             estimatedDurationS = 3_000.0
@@ -60,8 +62,40 @@ class CourseReuseFromRouteTest {
         val payload = CourseReuseFromRoute.fromRoute(route)!!
         assertEquals(start, payload.start)
         assertNull(payload.finish)
-        assertEquals(listOf(midA, midB), payload.locked)
+        assertEquals(listOf(midA), payload.locked)
         assertEquals(6.0, payload.targetDistanceKm, 0.001)
+    }
+
+    @Test
+    fun fromRoute_snapshotLockedPins_notAllIntermediates() {
+        val route = Route(
+            id = "snap-pins",
+            checkpoints = listOf(
+                cp(0, start, isStart = true),
+                cp(1, midA, isFixed = true),
+                cp(2, midB, isFixed = false),
+                cp(3, midC, isFixed = false),
+                cp(4, finishAway, isStart = true)
+            ),
+            polylinePoints = listOf(start, midA, midB, midC, finishAway),
+            targetDistanceM = 3_000.0,
+            totalDistanceM = 2_900.0,
+            estimatedDurationS = 1_800.0,
+            reuseSnapshot = CourseReuseSnapshot(
+                anyOrder = true,
+                minCheckpoints = 3,
+                maxCheckpoints = 15,
+                lockedPins = listOf(midA, midB),
+                start = start,
+                finish = finishAway,
+                hasExplicitFinish = true
+            )
+        )
+        val payload = CourseReuseFromRoute.fromRoute(route)!!
+        assertEquals(listOf(midA, midB), payload.locked)
+        assertEquals(finishAway, payload.finish)
+        assertEquals(3, payload.minCheckpoints)
+        assertEquals(15, payload.maxCheckpoints)
         assertTrue(payload.anyOrder)
     }
 
@@ -71,7 +105,7 @@ class CourseReuseFromRouteTest {
             id = "ow",
             checkpoints = listOf(
                 cp(0, start, isStart = true),
-                cp(1, midA),
+                cp(1, midA, isFixed = true),
                 cp(2, finishAway, isStart = true)
             ),
             polylinePoints = listOf(start, midA, finishAway),
@@ -84,26 +118,6 @@ class CourseReuseFromRouteTest {
         assertEquals(start, payload.start)
         assertEquals(finishAway, payload.finish)
         assertEquals(listOf(midA), payload.locked)
-        assertTrue(!payload.anyOrder || payload.locked.size < 2)
-    }
-
-    @Test
-    fun fromRoute_singleIntermediate_anyOrderFalse() {
-        val route = Route(
-            id = "one",
-            checkpoints = listOf(
-                cp(0, start, isStart = true),
-                cp(1, midA),
-                cp(2, start, isStart = true)
-            ),
-            polylinePoints = listOf(start, midA, start),
-            targetDistanceM = 3_000.0,
-            totalDistanceM = 2_800.0,
-            estimatedDurationS = 1_500.0
-        )
-        val payload = CourseReuseFromRoute.fromRoute(route, anyOrderDefault = true)!!
-        assertEquals(1, payload.locked.size)
-        assertEquals(false, payload.anyOrder)
     }
 
     @Test
@@ -125,14 +139,39 @@ class CourseReuseFromRouteTest {
                 minCheckpoints = 4,
                 maxCheckpoints = 8,
                 maxPathToAirRatio = 1.3f,
-                airDistanceToleranceM = 250f
+                airDistanceToleranceM = 250f,
+                lockedPins = listOf(midA),
+                start = start,
+                finish = null,
+                hasExplicitFinish = false
             )
         )
         val payload = CourseReuseFromRoute.fromRoute(route, anyOrderDefault = true)!!
         assertEquals(false, payload.anyOrder)
         assertEquals(4, payload.minCheckpoints)
         assertEquals(8, payload.maxCheckpoints)
+        assertEquals(listOf(midA), payload.locked)
         assertNotNull(payload.generationPrefs)
         assertEquals(1.3f, payload.generationPrefs!!.maxPathToAirRatio, 0.001f)
+    }
+
+    @Test
+    fun snapshot_fromJson_roundTripsLockedPins() {
+        val snap = CourseReuseSnapshot.from(
+            anyOrder = true,
+            prefs = com.orienteer.app.data.local.RouteGenerationPreferences(
+                minCheckpoints = 3,
+                maxCheckpoints = 15
+            ),
+            start = start,
+            finish = finishAway,
+            lockedPins = listOf(midA, midB)
+        )
+        val json = com.google.gson.Gson().toJson(snap)
+        val decoded = CourseReuseSnapshot.fromJson(json)!!
+        assertEquals(2, decoded.lockedPins.size)
+        assertEquals(midA.latitude, decoded.lockedPins[0].latitude, 1e-6)
+        assertEquals(true, decoded.hasExplicitFinish)
+        assertEquals(3, decoded.minCheckpoints)
     }
 }

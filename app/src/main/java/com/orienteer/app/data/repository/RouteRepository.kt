@@ -71,9 +71,8 @@ private fun RouteEntity.toDomain(gson: Gson): Route {
         polylineJson,
         Array<GeoPoint>::class.java
     ).toList()
-    val snapshot = reuseSnapshotJson.takeIf { it.isNotBlank() }?.let { json ->
-        runCatching { gson.fromJson(json, CourseReuseSnapshot::class.java) }.getOrNull()
-    }
+    // Nested GeoPoints must use hand decode — bare Gson yields LinkedTreeMap under R8.
+    val snapshot = CourseReuseSnapshot.fromJson(reuseSnapshotJson)
     return Route(
         id = id,
         checkpoints = checkpoints,

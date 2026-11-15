@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -23,9 +24,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -39,8 +43,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.orienteer.app.BuildConfig
 import com.orienteer.app.data.model.Route
 import com.orienteer.app.data.repository.RunSummary
+import com.orienteer.app.debug.ScreenshotDemoMode
+import com.orienteer.app.domain.CoursePointsCatalog
+import com.orienteer.app.domain.CoursePointsSet
 import com.orienteer.app.ui.components.OrienteerTopBar
 import com.orienteer.app.ui.icons.OrienteerIcons
 import com.orienteer.app.ui.theme.OrienteerCardShape
@@ -61,20 +69,37 @@ fun HistoryScreen(
     onApplyReuse: (Route, withPins: Boolean) -> Unit,
     onEditCheckpointsFromRoute: (Route) -> Unit,
     onGoToSetup: () -> Unit,
-    onSaveRouteToFavorites: suspend (Route) -> Unit,
+    onSaveRouteToFavorites: suspend (Route) -> List<CoursePointsSet>?,
+    onFavoriteSetFromRoute: (Route) -> CoursePointsSet?,
+    onReplaceFavorite: (removeId: String, set: CoursePointsSet) -> Unit,
     viewModel: HistoryViewModel = hiltViewModel()
 ) {
     val uiState = viewModel.uiState.collectAsStateWithLifecycle().value
     val dayGroups = remember(uiState.runs) { groupRunsByDay(uiState.runs) }
     val expandedDays = remember { mutableStateMapOf<String, Boolean>() }
+    // Store screenshots: keep only the newest day expanded so more day headers show.
+    LaunchedEffect(dayGroups) {
+        if (!BuildConfig.DEBUG ||
+            !ScreenshotDemoMode.scene.equals("history", ignoreCase = true)
+        ) {
+            return@LaunchedEffect
+        }
+        dayGroups.forEachIndexed { index, (dayKey, _) ->
+            expandedDays[dayKey] = index == 0
+        }
+    }
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     var reuseSessionId by remember { mutableStateOf<Long?>(null) }
     var pendingConfirm by remember { mutableStateOf<NewFromRunMode?>(null) }
     var pendingRoute by remember { mutableStateOf<Route?>(null) }
+    var pendingFavorite by remember { mutableStateOf<CoursePointsSet?>(null) }
+    var replaceCandidates by remember { mutableStateOf<List<CoursePointsSet>?>(null) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             OrienteerTopBar(
                 title = "Activity",
@@ -160,8 +185,31 @@ fun HistoryScreen(
                                 onNewFromThisRun = { reuseSessionId = run.sessionId },
                                 onSaveFavorite = {
                                     scope.launch {
-                                        viewModel.routeForSession(run.sessionId)?.let {
-                                            onSaveRouteToFavorites(it)
+                                        val route = viewModel.routeForSession(run.sessionId)
+                                        if (route == null) {
+                                            snackbarHostState.showSnackbar("Could not load run settings")
+                                            return@launch
+                                        }
+                                        val full = runCatching {
+                                            onSaveRouteToFavorites(route)
+                                        }.getOrElse {
+                                            snackbarHostState.showSnackbar("Could not save favorite")
+                                            return@launch
+                                        }
+                                        if (full != null) {
+                                            val set = onFavoriteSetFromRoute(route)
+                                            if (set != null) {
+                                                pendingFavorite = set
+                                                replaceCandidates = full
+                                            } else {
+                                                snackbarHostState.showSnackbar(
+                                                    "Favorites full — remove one in Setup"
+                                                )
+                                            }
+                                        } else {
+                                            snackbarHostState.showSnackbar(
+                                                "Saved to favorites — Use it on Setup to regenerate"
+                                            )
                                         }
                                     }
                                 }
@@ -214,6 +262,45 @@ fun HistoryScreen(
                 reuseSessionId = null
                 pendingConfirm = null
                 pendingRoute = null
+            }
+        )
+    }
+
+    val candidates = replaceCandidates
+    val pending = pendingFavorite
+    if (candidates != null && pending != null) {
+        AlertDialog(
+            onDismissRequest = {
+                replaceCandidates = null
+                pendingFavorite = null
+            },
+            title = { Text("Favorites full") },
+            text = {
+                Column {
+                    Text("Replace an existing favorite with this run's settings:")
+                    candidates.forEach { set ->
+                        TextButton(
+                            onClick = {
+                                onReplaceFavorite(set.id, pending)
+                                replaceCandidates = null
+                                pendingFavorite = null
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("Favorite replaced")
+                                }
+                            }
+                        ) {
+                            Text(CoursePointsCatalog.autoLabel(set))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        replaceCandidates = null
+                        pendingFavorite = null
+                    }
+                ) { Text("Cancel") }
             }
         )
     }
@@ -339,12 +426,8 @@ private fun ActivityRowCard(
                 TextButton(onClick = onNewFromThisRun) {
                     Text("New from this run…", style = MaterialTheme.typography.labelMedium)
                 }
-                IconButton(onClick = onSaveFavorite) {
-                    Icon(
-                        OrienteerIcons.Star,
-                        contentDescription = "Save course points to favorites",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
+                TextButton(onClick = onSaveFavorite) {
+                    Text("Add to favorites", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }

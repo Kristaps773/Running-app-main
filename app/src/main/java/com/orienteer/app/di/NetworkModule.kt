@@ -39,14 +39,34 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(): OkHttpClient {
+    @Named("osrmHttp")
+    fun provideOsrmOkHttpClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .callTimeout(20, TimeUnit.SECONDS)
             .addInterceptor(appUserAgentInterceptor())
-            // One retry only — generation has a hard 55s attempt budget.
             .addInterceptor(RetryInterceptor(maxRetries = 1))
+        if (BuildConfig.DEBUG) {
+            builder.addInterceptor(
+                HttpLoggingInterceptor().apply {
+                    level = HttpLoggingInterceptor.Level.BASIC
+                }
+            )
+        }
+        return builder.build()
+    }
+
+    /** Fail fast — Overpass 502s should not retry and stall route generation. */
+    @Provides
+    @Singleton
+    @Named("overpassHttp")
+    fun provideOverpassOkHttpClient(): OkHttpClient {
+        val builder = OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .callTimeout(12, TimeUnit.SECONDS)
+            .addInterceptor(appUserAgentInterceptor())
         if (BuildConfig.DEBUG) {
             builder.addInterceptor(
                 HttpLoggingInterceptor().apply {
@@ -60,7 +80,7 @@ object NetworkModule {
     @Provides
     @Singleton
     @Named("osrm")
-    fun provideOsrmRetrofit(okHttpClient: OkHttpClient, gson: Gson): Retrofit =
+    fun provideOsrmRetrofit(@Named("osrmHttp") okHttpClient: OkHttpClient, gson: Gson): Retrofit =
         Retrofit.Builder()
             .baseUrl(OSRM_BASE_URL)
             .client(okHttpClient)
@@ -70,7 +90,7 @@ object NetworkModule {
     @Provides
     @Singleton
     @Named("overpass")
-    fun provideOverpassRetrofit(okHttpClient: OkHttpClient, gson: Gson): Retrofit =
+    fun provideOverpassRetrofit(@Named("overpassHttp") okHttpClient: OkHttpClient, gson: Gson): Retrofit =
         Retrofit.Builder()
             .baseUrl(OVERPASS_BASE_URL)
             .client(okHttpClient)

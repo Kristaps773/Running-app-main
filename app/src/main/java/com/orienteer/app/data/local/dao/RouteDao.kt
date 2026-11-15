@@ -85,11 +85,17 @@ interface RunSessionDao {
     @Query("SELECT * FROM run_sessions WHERE routeId = :routeId ORDER BY startedAt DESC LIMIT 1")
     suspend fun getLastSessionForRoute(routeId: String): RunSessionEntity?
 
+    @Query("SELECT * FROM run_sessions WHERE routeId = :routeId")
+    suspend fun getSessionsForRoute(routeId: String): List<RunSessionEntity>
+
     @Query("SELECT * FROM run_sessions WHERE sessionId = :sessionId")
     suspend fun getSessionById(sessionId: Long): RunSessionEntity?
 
     @Query("DELETE FROM run_sessions WHERE sessionId = :sessionId")
     suspend fun deleteSessionById(sessionId: Long)
+
+    @Query("DELETE FROM run_sessions WHERE routeId = :routeId")
+    suspend fun deleteSessionsForRoute(routeId: String)
 
     @Query("DELETE FROM run_sessions")
     suspend fun deleteAllSessions()

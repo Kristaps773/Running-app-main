@@ -36,6 +36,7 @@ fun createReplayMapHost(
             MapView(context).apply {
                 applyBasemapStyle(this, context, basemapStyle)
                 setTag(R.id.map_tag_basemap_style, basemapStyle.name)
+                disableBuiltInZoomButtons()
                 controller.setZoom(15.0)
                 applyMapViewClipping(this)
                 attachScrollLimitListener(this)

@@ -65,22 +65,30 @@ class RoutePolylineProgressTest {
     }
 
     @Test
-    fun remainingFraction_monotoneAlongPath() {
+    fun leadFadeT_brightOnlyWithinShortLookahead() {
         val near = RoutePolylineProgress.project(line, GeoUtils.offsetPoint(origin, 50.0, 90.0))
-        val far = RoutePolylineProgress.project(line, GeoUtils.offsetPoint(origin, 250.0, 90.0))
-        // Fraction 0 at runner, 1 at end of remaining — near runner has more remaining length.
-        assertTrue(near.remainingDistanceM > far.remainingDistanceM)
-        val tNearEnd = RoutePolylineProgress.remainingColorT(
-            distanceAlongPointM = near.distanceAlongM + near.remainingDistanceM,
-            progress = near
-        )
-        val tNearStart = RoutePolylineProgress.remainingColorT(
+        val lookahead = RoutePolylineProgress.LEAD_LOOKAHEAD_M
+        val tAtRunner = RoutePolylineProgress.leadFadeT(
             distanceAlongPointM = near.distanceAlongM,
             progress = near
         )
-        assertEquals(0.0, tNearStart, 0.02)
-        assertEquals(1.0, tNearEnd, 0.02)
-        assertTrue(tNearStart < tNearEnd)
+        val tAtLookahead = RoutePolylineProgress.leadFadeT(
+            distanceAlongPointM = near.distanceAlongM + lookahead,
+            progress = near
+        )
+        val tBeyond = RoutePolylineProgress.leadFadeT(
+            distanceAlongPointM = near.distanceAlongM + lookahead + 50.0,
+            progress = near
+        )
+        val tBehind = RoutePolylineProgress.leadFadeT(
+            distanceAlongPointM = near.distanceAlongM - 20.0,
+            progress = near
+        )
+        assertEquals(0.0, tAtRunner, 0.02)
+        assertEquals(1.0, tAtLookahead, 0.02)
+        assertEquals(1.0, tBeyond, 0.02)
+        assertTrue(tBehind >= 1.0)
+        assertEquals(180.0, lookahead, 0.0)
     }
 
     @Test
@@ -98,5 +106,32 @@ class RoutePolylineProgressTest {
         val p = RoutePolylineProgress.project(emptyList(), origin)
         assertEquals(0.0, p.distanceAlongM, 0.0)
         assertEquals(0.0, p.remainingDistanceM, 0.0)
+    }
+
+    @Test
+    fun activeLeadRibbon_isOneContinuousSlice_notWholeOutAndBack() {
+        // Out 200 m east, then back 200 m west (same corridor twice).
+        val turn = GeoUtils.offsetPoint(origin, 200.0, 90.0)
+        val outAndBack = listOf(
+            origin,
+            GeoUtils.offsetPoint(origin, 100.0, 90.0),
+            turn,
+            GeoUtils.offsetPoint(origin, 100.0, 90.0),
+            origin
+        )
+        val midOut = GeoUtils.offsetPoint(origin, 80.0, 90.0)
+        val progress = RoutePolylineProgress.project(outAndBack, midOut)
+        val ribbon = RoutePolylineProgress.activeLeadRibbon(outAndBack, progress)
+        assertTrue(ribbon.points.size >= 2)
+        val ribbonLen = RoutePolylineProgress.pathLengthMeters(ribbon.points)
+        val maxLen = RoutePolylineProgress.LEAD_BEHIND_M + RoutePolylineProgress.LEAD_LOOKAHEAD_M + 15.0
+        assertTrue(
+            "ribbon should be a short local object, was ${ribbonLen}m",
+            ribbonLen <= maxLen
+        )
+        // Mid-out at ~80 m with 180 m lookahead reaches the turn (~200 m); that is OK.
+        // Ribbon must still be one local slice, not the whole out-and-back (~400 m).
+        assertTrue(ribbonLen < 250.0)
+        assertEquals(0.0, GeoUtils.distanceMeters(ribbon.runnerPoint, midOut), 5.0)
     }
 }

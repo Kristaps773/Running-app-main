@@ -10,6 +10,12 @@ object RoutePolylineProgress {
 
     const val DEFAULT_BUCKET_SIZE_M = 70.0
 
+    /** Bright lead fades out over this many metres ahead of the runner (not the whole course). */
+    const val LEAD_LOOKAHEAD_M = 180.0
+
+    /** Short dim trail behind the runner on the same continuous ribbon. */
+    const val LEAD_BEHIND_M = 25.0
+
     data class Progress(
         val segmentIndex: Int,
         /** Metres from polyline start along the path to the snap point. */
@@ -83,13 +89,21 @@ object RoutePolylineProgress {
     }
 
     /**
-     * 0 at the runner’s snap (start of remaining), 1 at the end of the remaining path.
+     * Lead fade along a short lookahead window:
+     * - behind runner → 1 (dim)
+     * - at snap → 0 (bright)
+     * - at snap+[LEAD_LOOKAHEAD_M] and beyond → 1 (quiet)
      */
-    fun remainingColorT(distanceAlongPointM: Double, progress: Progress): Double {
-        val rem = progress.remainingDistanceM
-        if (rem <= 1e-3) return 1.0
-        val fromSnap = (distanceAlongPointM - progress.distanceAlongM).coerceIn(0.0, rem)
-        return (fromSnap / rem).coerceIn(0.0, 1.0)
+    fun leadFadeT(
+        distanceAlongPointM: Double,
+        progress: Progress,
+        lookaheadM: Double = LEAD_LOOKAHEAD_M
+    ): Double {
+        val window = lookaheadM.coerceAtLeast(1.0)
+        val delta = distanceAlongPointM - progress.distanceAlongM
+        if (delta < 0.0) return 1.0
+        if (delta >= window) return 1.0
+        return (delta / window).coerceIn(0.0, 1.0)
     }
 
     fun remainingPoints(polyline: List<GeoPoint>, progress: Progress): List<GeoPoint> {
@@ -105,6 +119,40 @@ object RoutePolylineProgress {
         return out
     }
 
+    /**
+     * One continuous local path object around the runner (behind + ahead along route order).
+     * Avoids drawing the full course so out-and-back / reused roads do not appear as
+     * overlapping parallel strokes.
+     */
+    data class LeadRibbon(
+        val points: List<GeoPoint>,
+        /** Metres along [points] from ribbon start to the runner snap. */
+        val runnerOffsetM: Double,
+        val runnerPoint: GeoPoint
+    )
+
+    fun activeLeadRibbon(
+        polyline: List<GeoPoint>,
+        progress: Progress,
+        behindM: Double = LEAD_BEHIND_M,
+        aheadM: Double = LEAD_LOOKAHEAD_M
+    ): LeadRibbon {
+        if (polyline.size < 2) {
+            val p = polyline.firstOrNull() ?: progress.snapPoint
+            return LeadRibbon(listOf(p, p), runnerOffsetM = 0.0, runnerPoint = progress.snapPoint)
+        }
+        val total = pathLengthMeters(polyline)
+        val fromM = (progress.distanceAlongM - behindM.coerceAtLeast(0.0)).coerceIn(0.0, total)
+        val toM = (progress.distanceAlongM + aheadM.coerceAtLeast(1.0)).coerceIn(0.0, total)
+        val points = sliceAlongMeters(polyline, fromM, toM)
+        val runnerOffset = (progress.distanceAlongM - fromM).coerceAtLeast(0.0)
+        return LeadRibbon(
+            points = points,
+            runnerOffsetM = runnerOffset,
+            runnerPoint = progress.snapPoint
+        )
+    }
+
     fun pathLengthMeters(polyline: List<GeoPoint>): Double {
         if (polyline.size < 2) return 0.0
         var total = 0.0
@@ -112,6 +160,59 @@ object RoutePolylineProgress {
             total += GeoUtils.distanceMeters(polyline[i], polyline[i + 1])
         }
         return total
+    }
+
+    fun pointAlongMeters(polyline: List<GeoPoint>, distanceM: Double): GeoPoint {
+        if (polyline.isEmpty()) return GeoPoint(0.0, 0.0)
+        if (polyline.size == 1) return polyline.first()
+        var remaining = distanceM.coerceAtLeast(0.0)
+        for (i in 0 until polyline.lastIndex) {
+            val a = polyline[i]
+            val b = polyline[i + 1]
+            val len = GeoUtils.distanceMeters(a, b)
+            if (remaining <= len || i == polyline.lastIndex - 1) {
+                val t = if (len < 1e-6) 0.0 else (remaining / len).coerceIn(0.0, 1.0)
+                return GeoPoint(
+                    latitude = a.latitude + (b.latitude - a.latitude) * t,
+                    longitude = a.longitude + (b.longitude - a.longitude) * t
+                )
+            }
+            remaining -= len
+        }
+        return polyline.last()
+    }
+
+    fun sliceAlongMeters(polyline: List<GeoPoint>, fromM: Double, toM: Double): List<GeoPoint> {
+        if (polyline.size < 2) return polyline
+        val start = fromM.coerceAtMost(toM)
+        val end = toM.coerceAtLeast(fromM)
+        if (end - start < 0.5) {
+            val p = pointAlongMeters(polyline, start)
+            return listOf(p, pointAlongMeters(polyline, (start + 1.0).coerceAtMost(pathLengthMeters(polyline))))
+        }
+        val out = ArrayList<GeoPoint>()
+        out.add(pointAlongMeters(polyline, start))
+        var along = 0.0
+        for (i in 0 until polyline.lastIndex) {
+            val a = polyline[i]
+            val b = polyline[i + 1]
+            val len = GeoUtils.distanceMeters(a, b)
+            val nextAlong = along + len
+            if (nextAlong > start && along < end) {
+                // Include vertex b when it lies inside (start, end]
+                if (nextAlong > start + 0.3 && nextAlong < end - 0.3) {
+                    out.add(b)
+                }
+            }
+            along = nextAlong
+            if (along >= end) break
+        }
+        val endPt = pointAlongMeters(polyline, end)
+        if (out.isEmpty() || GeoUtils.distanceMeters(out.last(), endPt) > 0.3) {
+            out.add(endPt)
+        }
+        if (out.size == 1) out.add(endPt)
+        return out
     }
 
     /**

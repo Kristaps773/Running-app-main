@@ -30,12 +30,14 @@ kristapsduda773@gmail.com
 ## Assets prepared locally
 - store-assets/icon-512.png
 - store-assets/feature-graphic-1024x500.png
-- Phone screenshots (Alpine Trail UI, Play Console default listing en-GB, saved 2026-10-24):
-  - store-assets/screenshots/reddit-01-setup.png → 01-setup-alpine.jpg (1050×2100)
-  - store-assets/screenshots/reddit-02-map-route.png → 02-map-alpine.jpg (720×1600)
-  - store-assets/screenshots/reddit-03-active-run.png → 03-active-run-alpine.jpg (720×1600)
-  - store-assets/screenshots/reddit-04-history.png → 04-history-alpine.jpg (720×1600)
-- Desktop mirror: C:\Users\pc\Desktop\PlayStore-OrienteerRun-Assets\ (also 01-setup.jpg … 04-history.jpg)
-- Play Console: Default store listing → Phone screenshots (replaced orienteerrun-phone-01..04.jpg)
-- Publish status (2026-10-24): saved + submitted; Publishing overview → “Changes in review” → Change Phone screenshots (quick checks ~12 min, then Google review). Not live on public Play listing until approved.
-- Console display order (left→right): 01-setup, 04-history, 02-map, 03-active-run — drag to 01→02→03→04 if desired before approval completes.
+- Phone screenshots (demo UI + fake runs; capture via store-assets/capture-screenshots.ps1):
+  - store-assets/screenshots/01-setup.png (+ phone-01.jpg)
+  - store-assets/screenshots/02-map.png (+ phone-02.jpg)
+  - store-assets/screenshots/03-active-run.png (+ phone-03.jpg)
+  - store-assets/screenshots/04-history.png (+ phone-04.jpg)
+  - store-assets/screenshots/05-favorites.png (+ phone-05.jpg)
+  - store-assets/screenshots/06-settings.png (+ phone-06.jpg)
+- Play upload folder: store-assets/_play_upload/ (phone-01…06.jpg)
+- Desktop mirror: C:\Users\pc\Desktop\PlayStore-OrienteerRun-Assets\
+- Promo copy + where/how: store-assets/PROMO_MESSAGE.md (closed tester CTAs)
+- Play Console: Grow → Store listings → Main store listing → Phone screenshots in 01→06 order.

@@ -93,4 +93,48 @@ class CoursePointsCatalogTest {
         assertTrue(label.startsWith("2 locked"))
         assertTrue(label.contains("any"))
     }
+
+    @Test
+    fun autoLabel_prefersDisplayNameWhenPresent() {
+        val labeled = CoursePointsCatalog.autoLabel(set("x").copy(displayName = "  Park loop  "))
+        assertEquals("Park loop", labeled)
+    }
+
+    @Test
+    fun autoLabel_fallsBackWhenDisplayNameBlank() {
+        val auto = CoursePointsCatalog.autoLabel(set("x", locked = listOf(a)))
+        val blank = CoursePointsCatalog.autoLabel(set("x", locked = listOf(a)).copy(displayName = "   "))
+        assertEquals(auto, blank)
+    }
+
+    @Test
+    fun renameFavorite_updatesDisplayName_onlyMatchingId() {
+        val list = listOf(set("a"), set("b"))
+        val next = CoursePointsCatalog.renameFavorite(list, "a", "  My route  ")
+        assertEquals("My route", next[0].displayName)
+        assertEquals(null, next[1].displayName)
+    }
+
+    @Test
+    fun renameFavorite_blankClearsDisplayName() {
+        val list = listOf(set("a").copy(displayName = "Old"))
+        val next = CoursePointsCatalog.renameFavorite(list, "a", "  ")
+        assertEquals(null, next[0].displayName)
+    }
+
+    @Test
+    fun autoLabel_prefersTargetDistanceWhenPresent() {
+        val labeled = CoursePointsCatalog.autoLabel(
+            set("x", locked = listOf(a, b)).copy(targetDistanceKm = 5.0)
+        )
+        assertTrue(labeled.contains("5.0 km"))
+        assertTrue(!labeled.contains("~"))
+    }
+
+    @Test
+    fun fingerprint_includesGenerateKnobs() {
+        val base = set("x", locked = listOf(a, b))
+        val withKm = base.copy(targetDistanceKm = 5.0)
+        assertTrue(CoursePointsCatalog.fingerprint(base) != CoursePointsCatalog.fingerprint(withKm))
+    }
 }

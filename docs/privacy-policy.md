@@ -1,6 +1,6 @@
 # Privacy Policy — OrienteerRun
 
-**Last updated:** 25 October 2026  
+**Last updated:** 15 November 2026  
 **Contact:** kristapsduda773@gmail.com
 
 OrienteerRun (“the App”) is a free Android training app that generates GPS-verified orienteering-style running routes. This policy explains what data is involved when you use the App.
@@ -32,7 +32,9 @@ Routes, run history, map preferences, and a local map-tile cache are stored **on
 
 ### Exports you choose to share
 
-If you use **GPX** or **PDF** export, the App writes a file on your device and opens the system share sheet. You choose the destination app (email, drive, messaging, etc.). Exported files can include checkpoint coordinates, planned path geometry, and—for run exports—recorded GPS track points and timestamps. OrienteerRun does not upload those files to its own servers.
+If you use **GPX**, **PDF**, or a **JSON backup** export, the App writes a file on your device and opens the system share sheet (or a save dialog). You choose the destination app (email, drive, messaging, etc.). Exported files can include checkpoint coordinates, planned path geometry, settings, and—for run exports—recorded GPS track points and timestamps. OrienteerRun does not upload those files to its own servers.
+
+If you open the optional **OpenOrienteeringMap (Oomap)** website link from the App, your browser loads a public page centered near your route start; that site’s own terms and privacy policy apply.
 
 ### Network services (third parties)
 
@@ -40,24 +42,24 @@ To show maps and build walkable routes, the App contacts third-party services ov
 
 | Service | Purpose |
 |---------|---------|
-| OpenStreetMap Mapnik tiles | Standard basemap imagery |
-| CARTO (basemaps.cartocdn.com) | Optional dark basemap |
+| OpenStreetMap Mapnik tiles (`tile.openstreetmap.org`) | Standard, Dark (inverted tiles), Street-O, and Pseud-O basemap |
+| OpenOrienteeringMap LiDAR contours (`oomap.dna-software.co.uk`) | Optional contour overlay for Pseud-O |
 | OpenTopoMap | Optional topographic basemap |
 | CyclOSM | Optional cycling/outdoors basemap |
-| OpenOrienteeringMap (contour overlay) | Optional LiDAR-derived contour layer |
-| OSRM (e.g. routing.openstreetmap.de, foot profile) | Walking-path geometry between checkpoints |
-| Overpass API (e.g. overpass-api.de) | Nearby points of interest for checkpoint labels |
+| OSRM (e.g. `routing.openstreetmap.de`, foot profile) | Walking-path geometry between checkpoints |
+| Overpass API (e.g. `overpass-api.de`) | Nearby points of interest for checkpoint labels |
 
-Which tile hosts are contacted depends on the map style you select in Settings.
+Which tile hosts are contacted depends on the map style you select in Settings. Dark mode uses the same OSM Mapnik tiles with on-device color inversion (no separate dark-tile CDN).
 
 ### Crash and performance diagnostics (Sentry)
 
-If a Sentry project DSN is configured for the build, the App may send crash reports and limited performance data to **Sentry** (sentry.io), including:
+If a Sentry project DSN is configured for the build, the App may send crash reports, limited performance data, and technical diagnostics for failed route generation to **Sentry** (sentry.io), including:
 
 - Device model and OS version
 - App version / release identifier
 - Stack traces and related technical diagnostics
-- Sampled performance / interaction traces (no advertising profiles)
+- Sampled performance / transaction traces (no advertising profiles)
+- Non-precise generation context (for example error stage or HTTP status), not a continuous GPS track
 
 Default personally identifiable information (such as user name or email) is not attached by the App. This helps fix bugs. We do not use Sentry to sell data or show ads. See [https://sentry.io/privacy/](https://sentry.io/privacy/).
 
@@ -70,7 +72,7 @@ The App is not directed at children under 13. Do not use it if you are under the
 - Deny location or notification permission in Android settings (route generation / tracking / the run notification may not work).
 - Change or limit map style so fewer or different tile providers are contacted.
 - Clear app data or uninstall to remove local history and caches.
-- Avoid GPX/PDF share if you do not want route or track files leaving the device.
+- Avoid GPX / PDF / backup share if you do not want route, track, or settings files leaving the device.
 - Contact us (email above) with privacy questions.
 
 ## Changes

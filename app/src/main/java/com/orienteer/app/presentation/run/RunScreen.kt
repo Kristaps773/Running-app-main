@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import com.orienteer.app.ui.icons.OrienteerIcons
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -36,7 +38,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.orienteer.app.BuildConfig
 import com.orienteer.app.R
+import com.orienteer.app.debug.ScreenshotDemoMode
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.orienteer.app.data.local.BasemapStyle
@@ -48,8 +52,11 @@ import com.orienteer.app.presentation.components.RoutePlottingLoader
 import com.orienteer.app.domain.RunMapCameraMode
 import com.orienteer.app.domain.RunPathLeadMode
 import com.orienteer.app.presentation.map.MapAttributionBar
+import com.orienteer.app.presentation.map.MapChromeEndReserve
+import com.orienteer.app.presentation.map.MapZoomControls
 import com.orienteer.app.presentation.map.OsmMapHost
 import com.orienteer.app.presentation.map.PathLeadDrawState
+import org.osmdroid.views.MapView
 import com.orienteer.app.ui.components.OrienteerGhostButton
 import com.orienteer.app.util.RoutePdfExporter
 import com.orienteer.app.ui.theme.OrienteerCardShape
@@ -70,7 +77,10 @@ fun RunScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val mapDisplay by viewModel.mapDisplayPreferences.collectAsStateWithLifecycle()
     var showStopConfirm by remember { mutableStateOf(false) }
-    var runPanelExpanded by remember { mutableStateOf(true) }
+    var runPanelExpanded by remember {
+        mutableStateOf(!(BuildConfig.DEBUG && ScreenshotDemoMode.collapseSheetsForCapture))
+    }
+    var mapViewRef by remember { mutableStateOf<MapView?>(null) }
 
     LaunchedEffect(uiState.isFinished) {
         if (uiState.isFinished) onRunComplete()
@@ -191,6 +201,7 @@ fun RunScreen(
                         cameraMode = RunMapCameraMode.onUserGesture(cameraMode)
                     }
                 },
+                onMapReady = { mapViewRef = it },
                 modifier = Modifier.fillMaxSize()
             )
         } else {
@@ -200,21 +211,31 @@ fun RunScreen(
             )
         }
 
-        if (leadEnabled &&
-            cameraMode == RunMapCameraMode.State.FreeLook &&
-            currentLocation != null
+        val mapChromeBottom = if (runPanelExpanded) 220.dp else 72.dp
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = OrienteerSpacing.md, bottom = mapChromeBottom)
+                .zIndex(2f),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(OrienteerSpacing.xs)
         ) {
-            GhostTextButton(
-                text = recenterLabel,
-                onClick = { cameraMode = RunMapCameraMode.onRecenter(cameraMode) },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(
-                        end = OrienteerSpacing.md,
-                        bottom = if (runPanelExpanded) 220.dp else 72.dp
-                    )
-                    .zIndex(2f)
+            MapZoomControls(
+                onZoomIn = { mapViewRef?.controller?.zoomIn() },
+                onZoomOut = { mapViewRef?.controller?.zoomOut() }
             )
+            if (leadEnabled &&
+                cameraMode == RunMapCameraMode.State.FreeLook &&
+                currentLocation != null
+            ) {
+                FloatingActionButton(
+                    onClick = { cameraMode = RunMapCameraMode.onRecenter(cameraMode) },
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.primary
+                ) {
+                    Icon(OrienteerIcons.MyLocation, contentDescription = recenterLabel)
+                }
+            }
         }
 
         MapAttributionBar(
@@ -223,8 +244,8 @@ fun RunScreen(
                 .align(Alignment.BottomStart)
                 .padding(
                     start = OrienteerSpacing.sm,
-                    bottom = if (runPanelExpanded) 220.dp else 72.dp,
-                    end = OrienteerSpacing.sm
+                    bottom = mapChromeBottom,
+                    end = MapChromeEndReserve
                 )
                 .zIndex(1f)
         )

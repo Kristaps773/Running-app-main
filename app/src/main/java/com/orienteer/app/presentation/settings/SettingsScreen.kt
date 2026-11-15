@@ -5,6 +5,8 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -53,10 +55,11 @@ import com.orienteer.app.data.local.BasemapStyle
 import com.orienteer.app.data.local.RouteGenerationPreset
 import com.orienteer.app.data.local.UserPreferencesStore
 import com.orienteer.app.ui.theme.OrienteerSpacing
+import com.orienteer.app.ui.theme.orienteerSliderColors
 import io.sentry.Sentry
 import kotlinx.coroutines.flow.collectLatest
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
@@ -69,6 +72,7 @@ fun SettingsScreen(
     val m = state.mapDisplay
     var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
     var showOmapLegend by remember { mutableStateOf(false) }
+    var detailDialog by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -138,6 +142,19 @@ fun SettingsScreen(
         )
     }
 
+    detailDialog?.let { (title, body) ->
+        AlertDialog(
+            onDismissRequest = { detailDialog = null },
+            title = { Text(title) },
+            text = { Text(body) },
+            confirmButton = {
+                TextButton(onClick = { detailDialog = null }) {
+                    Text(stringResource(R.string.settings_detail_ok))
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -183,41 +200,55 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(Modifier.height(8.dp))
-            Text(
-                text = stringResource(R.string.settings_route_preset_title),
-                style = MaterialTheme.typography.titleSmall
-            )
-            Spacer(Modifier.height(4.dp))
+            val presetTitle = stringResource(R.string.settings_route_preset_title)
+            val presetDetail = when (RouteGenerationPreset.matching(r)) {
+                RouteGenerationPreset.PRECISE ->
+                    stringResource(R.string.settings_route_preset_precise_sub)
+                RouteGenerationPreset.BALANCED ->
+                    stringResource(R.string.settings_route_preset_balanced_sub)
+                RouteGenerationPreset.FLEXIBLE ->
+                    stringResource(R.string.settings_route_preset_flexible_sub)
+                null -> stringResource(R.string.settings_route_preset_hint)
+            }
+            Column(
+                modifier = Modifier.combinedClickable(
+                    onClick = {},
+                    onLongClick = { detailDialog = presetTitle to presetDetail }
+                )
+            ) {
+                Text(
+                    text = presetTitle,
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    text = stringResource(R.string.settings_route_preset_brief),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+                )
+            }
             RouteGenerationPresetChips(
                 selected = RouteGenerationPreset.matching(r),
                 onSelect = viewModel::setRouteGenerationPreset
             )
-            Text(
-                text = when (RouteGenerationPreset.matching(r)) {
-                    RouteGenerationPreset.PRECISE ->
-                        stringResource(R.string.settings_route_preset_precise_sub)
-                    RouteGenerationPreset.BALANCED ->
-                        stringResource(R.string.settings_route_preset_balanced_sub)
-                    RouteGenerationPreset.FLEXIBLE ->
-                        stringResource(R.string.settings_route_preset_flexible_sub)
-                    null -> stringResource(R.string.settings_route_preset_custom)
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-            Text(
-                text = stringResource(R.string.settings_route_preset_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
-            )
 
             Spacer(Modifier.height(16.dp))
-            Text(
-                text = stringResource(R.string.settings_air_tolerance_title),
-                style = MaterialTheme.typography.titleSmall
-            )
+            val airTitle = stringResource(R.string.settings_air_tolerance_title)
+            val airDetail = stringResource(R.string.settings_air_tolerance_hint)
+            Column(
+                modifier = Modifier.combinedClickable(
+                    onClick = {},
+                    onLongClick = { detailDialog = airTitle to airDetail }
+                )
+            ) {
+                Text(text = airTitle, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = stringResource(R.string.settings_air_tolerance_brief),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
             Text(
                 text = stringResource(R.string.settings_air_tolerance_value, r.airDistanceToleranceM),
                 style = MaterialTheme.typography.bodyMedium
@@ -227,21 +258,27 @@ fun SettingsScreen(
                 onValueChange = { viewModel.setAirDistanceToleranceM(it) },
                 valueRange = UserPreferencesStore.MIN_AIR_TOLERANCE_M.toFloat()..UserPreferencesStore.MAX_AIR_TOLERANCE_M.toFloat(),
                 steps = 22,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Text(
-                text = stringResource(R.string.settings_air_tolerance_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.fillMaxWidth(),
+                colors = orienteerSliderColors()
             )
 
             Spacer(Modifier.height(16.dp))
-
-            Text(
-                text = stringResource(R.string.settings_path_ratio_title),
-                style = MaterialTheme.typography.titleSmall
-            )
+            val pathTitle = stringResource(R.string.settings_path_ratio_title)
+            val pathDetail = stringResource(R.string.settings_path_ratio_hint)
+            Column(
+                modifier = Modifier.combinedClickable(
+                    onClick = {},
+                    onLongClick = { detailDialog = pathTitle to pathDetail }
+                )
+            ) {
+                Text(text = pathTitle, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = stringResource(R.string.settings_path_ratio_brief),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
             Text(
                 text = stringResource(R.string.settings_route_ratio_value, r.maxPathToAirRatio),
                 style = MaterialTheme.typography.bodyMedium
@@ -251,13 +288,8 @@ fun SettingsScreen(
                 onValueChange = { viewModel.setMaxPathToAirRatio(it) },
                 valueRange = UserPreferencesStore.MIN_RATIO.toFloat()..UserPreferencesStore.MAX_RATIO.toFloat(),
                 steps = 13,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Text(
-                text = stringResource(R.string.settings_path_ratio_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.fillMaxWidth(),
+                colors = orienteerSliderColors()
             )
 
             Spacer(Modifier.height(24.dp))
@@ -273,51 +305,71 @@ fun SettingsScreen(
 
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_show_air_legs),
-                subtitle = stringResource(R.string.settings_show_air_legs_sub),
+                brief = stringResource(R.string.settings_show_air_legs_brief),
+                detail = stringResource(R.string.settings_show_air_legs_sub),
                 checked = m.showAirLegLines,
-                onCheckedChange = { viewModel.setShowAirLegLines(it) }
+                onCheckedChange = { viewModel.setShowAirLegLines(it) },
+                onShowDetail = { title, body -> detailDialog = title to body }
             )
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_show_air_labels),
-                subtitle = stringResource(R.string.settings_show_air_labels_sub),
+                brief = stringResource(R.string.settings_show_air_labels_brief),
+                detail = stringResource(R.string.settings_show_air_labels_sub),
                 checked = m.showAirLegDistanceLabels,
                 onCheckedChange = { viewModel.setShowAirLegDistanceLabels(it) },
-                enabled = m.showAirLegLines
+                enabled = m.showAirLegLines,
+                onShowDetail = { title, body -> detailDialog = title to body }
             )
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_show_walking_path),
-                subtitle = stringResource(R.string.settings_show_walking_path_sub),
+                brief = stringResource(R.string.settings_show_walking_path_brief),
+                detail = stringResource(R.string.settings_show_walking_path_sub),
                 checked = m.showWalkingPathPolyline,
-                onCheckedChange = { viewModel.setShowWalkingPathPolyline(it) }
+                onCheckedChange = { viewModel.setShowWalkingPathPolyline(it) },
+                onShowDetail = { title, body -> detailDialog = title to body }
             )
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_show_you_are_here),
-                subtitle = stringResource(R.string.settings_show_you_are_here_sub),
+                brief = stringResource(R.string.settings_show_you_are_here_brief),
+                detail = stringResource(R.string.settings_show_you_are_here_sub),
                 checked = m.showYouAreHereDuringRun,
-                onCheckedChange = { viewModel.setShowYouAreHereDuringRun(it) }
+                onCheckedChange = { viewModel.setShowYouAreHereDuringRun(it) },
+                onShowDetail = { title, body -> detailDialog = title to body }
             )
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_include_pdf_legends),
-                subtitle = stringResource(R.string.settings_include_pdf_legends_sub),
+                brief = stringResource(R.string.settings_include_pdf_legends_brief),
+                detail = stringResource(R.string.settings_include_pdf_legends_sub),
                 checked = m.includePdfLegends,
-                onCheckedChange = { viewModel.setIncludePdfLegends(it) }
+                onCheckedChange = { viewModel.setIncludePdfLegends(it) },
+                onShowDetail = { title, body -> detailDialog = title to body }
             )
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_iof_overprint),
-                subtitle = stringResource(R.string.settings_iof_overprint_sub),
+                brief = stringResource(R.string.settings_iof_overprint_brief),
+                detail = stringResource(R.string.settings_iof_overprint_sub),
                 checked = m.useIofCourseOverprint,
-                onCheckedChange = { viewModel.setUseIofCourseOverprint(it) }
+                onCheckedChange = { viewModel.setUseIofCourseOverprint(it) },
+                onShowDetail = { title, body -> detailDialog = title to body }
             )
-            Text(
-                text = stringResource(R.string.settings_map_style_title),
-                style = MaterialTheme.typography.titleSmall
-            )
-            Text(
-                text = stringResource(R.string.settings_map_style_sub),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
-            )
+            val mapStyleTitle = stringResource(R.string.settings_map_style_title)
+            val mapStyleDetail = stringResource(R.string.settings_map_style_sub)
+            Column(
+                modifier = Modifier
+                    .padding(bottom = 8.dp)
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClick = { detailDialog = mapStyleTitle to mapStyleDetail }
+                    )
+            ) {
+                Text(text = mapStyleTitle, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = stringResource(R.string.settings_map_style_brief),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
             BasemapStyleChips(
                 selected = m.basemapStyle,
                 onSelect = viewModel::setBasemapStyle
@@ -327,7 +379,7 @@ fun SettingsScreen(
                 headlineContent = { Text(stringResource(R.string.settings_omap_legend)) },
                 supportingContent = {
                     Text(
-                        stringResource(R.string.settings_omap_legend_sub),
+                        stringResource(R.string.settings_omap_legend_brief),
                         style = MaterialTheme.typography.bodySmall
                     )
                 },
@@ -356,27 +408,43 @@ fun SettingsScreen(
                 headlineContent = { Text(stringResource(R.string.settings_export_backup)) },
                 supportingContent = {
                     Text(
-                        stringResource(R.string.settings_export_backup_sub),
+                        stringResource(R.string.settings_export_backup_brief),
                         style = MaterialTheme.typography.bodySmall
                     )
                 },
                 modifier = Modifier
                     .padding(vertical = 4.dp)
-                    .clickable(enabled = !state.backupBusy) { viewModel.exportBackup() }
+                    .combinedClickable(
+                        enabled = !state.backupBusy,
+                        onClick = { viewModel.exportBackup() },
+                        onLongClick = {
+                            detailDialog =
+                                context.getString(R.string.settings_export_backup) to
+                                    context.getString(R.string.settings_export_backup_sub)
+                        }
+                    )
             )
             ListItem(
                 headlineContent = { Text(stringResource(R.string.settings_import_backup)) },
                 supportingContent = {
                     Text(
-                        stringResource(R.string.settings_import_backup_sub),
+                        stringResource(R.string.settings_import_backup_brief),
                         style = MaterialTheme.typography.bodySmall
                     )
                 },
                 modifier = Modifier
                     .padding(vertical = 4.dp)
-                    .clickable(enabled = !state.backupBusy) {
-                        importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
-                    }
+                    .combinedClickable(
+                        enabled = !state.backupBusy,
+                        onClick = {
+                            importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                        },
+                        onLongClick = {
+                            detailDialog =
+                                context.getString(R.string.settings_import_backup) to
+                                    context.getString(R.string.settings_import_backup_sub)
+                        }
+                    )
             )
 
             Spacer(Modifier.height(24.dp))
@@ -547,17 +615,37 @@ private fun RouteGenerationPresetChips(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SettingsSwitchRow(
     title: String,
-    subtitle: String,
+    brief: String,
+    detail: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    onShowDetail: (String, String) -> Unit,
     enabled: Boolean = true
 ) {
     ListItem(
-        headlineContent = { Text(title) },
-        supportingContent = { Text(subtitle, style = MaterialTheme.typography.bodySmall) },
+        headlineContent = {
+            Text(
+                title,
+                modifier = Modifier.combinedClickable(
+                    onClick = {},
+                    onLongClick = { onShowDetail(title, detail) }
+                )
+            )
+        },
+        supportingContent = {
+            Text(
+                brief,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.combinedClickable(
+                    onClick = {},
+                    onLongClick = { onShowDetail(title, detail) }
+                )
+            )
+        },
         trailingContent = {
             Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
         },

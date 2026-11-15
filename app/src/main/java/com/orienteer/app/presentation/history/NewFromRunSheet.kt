@@ -4,7 +4,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -14,8 +17,11 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import com.orienteer.app.presentation.components.PrimaryGreenButton
 import com.orienteer.app.ui.components.OrienteerGhostButton
+import com.orienteer.app.ui.theme.BrandForest
+import com.orienteer.app.ui.theme.OrienteerCardShape
 import com.orienteer.app.ui.theme.OrienteerSpacing
 
 enum class NewFromRunMode {
@@ -55,7 +61,7 @@ fun NewFromRunSheet(
             )
             if (pendingConfirm == null) {
                 Text(
-                    text = "Reuse distance and preferences for a new Generate — not an exact replay.",
+                    text = "Reuse the distance and settings you used to generate — not a copy of every control on the course.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -65,7 +71,7 @@ fun NewFromRunSheet(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
-                    text = "Distance + min/max (+ prefs) and lock every intermediate control from this run.",
+                    text = "Distance + min/max (+ prefs) and the locked pins you set before Generate.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -75,7 +81,7 @@ fun NewFromRunSheet(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
-                    text = "Open the picker with those pins so you can edit before activating.",
+                    text = "Open the picker with those locked pins so you can edit before activating.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -85,7 +91,7 @@ fun NewFromRunSheet(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
-                    text = "Apply distance + min/max (+ prefs); clear active locked pins.",
+                    text = "Apply distance + min/max (+ prefs); clear locked pins. Keeps start/finish.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -105,16 +111,43 @@ fun NewFromRunSheet(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(OrienteerSpacing.sm)
                 ) {
-                    OrienteerGhostButton(
-                        text = "Stay in History",
+                    // Equal 48dp height — PrimaryGreenButton is 56dp / Ghost is 44dp by default.
+                    Button(
                         onClick = onStayInHistory,
-                        modifier = Modifier.weight(1f)
-                    )
-                    PrimaryGreenButton(
-                        text = "Go to Setup",
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        shape = OrienteerCardShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            contentColor = MaterialTheme.colorScheme.primary
+                        ),
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+                    ) {
+                        Text(
+                            "Stay in History",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Button(
                         onClick = onGoToSetup,
-                        modifier = Modifier.weight(1f)
-                    )
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        shape = OrienteerCardShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = BrandForest,
+                            contentColor = androidx.compose.ui.graphics.Color.White
+                        ),
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+                    ) {
+                        Text(
+                            "Go to Setup",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
             TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {

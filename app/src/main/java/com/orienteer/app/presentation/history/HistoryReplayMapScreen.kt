@@ -327,7 +327,7 @@ fun HistoryReplayMapScreen(
                             legs.forEachIndexed { index, leg ->
                                 val fromLabel = visits.getOrNull(index)?.label ?: "Start"
                                 val toLabel = visits.getOrNull(index + 1)?.label
-                                    ?: "CP ${leg.checkpointId}"
+                                    ?: "${leg.checkpointId}"
                                 val timeText = leg.durationMs?.let { GeoUtils.formatDuration(it) } ?: "—"
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -374,7 +374,7 @@ fun HistoryReplayMapScreen(
                             legs.forEachIndexed { index, leg ->
                                 val fromLabel = visits.getOrNull(index)?.label ?: "Start"
                                 val toLabel = visits.getOrNull(index + 1)?.label
-                                    ?: "CP ${leg.checkpointId}"
+                                    ?: "${leg.checkpointId}"
                                 val value = legSecondsByDestId[leg.checkpointId].orEmpty()
                                 OutlinedTextField(
                                     value = value,

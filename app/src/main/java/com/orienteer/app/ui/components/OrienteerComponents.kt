@@ -141,6 +141,7 @@ fun OrienteerPrimaryButton(
         if (icon != null) {
             Icon(icon, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
         }
+        // Locked with PrimaryGreenButton / ActionTypography.PRIMARY_CTA_STYLE.
         Text(text, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
     }
 }

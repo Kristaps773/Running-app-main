@@ -54,7 +54,10 @@ import com.orienteer.app.presentation.map.CheckpointMarkerIcon
 import com.orienteer.app.presentation.map.CourseEndpointMarkerIcon
 import com.orienteer.app.presentation.map.IOF_PURPLE_ARGB
 import com.orienteer.app.presentation.map.MapAttributionBar
+import com.orienteer.app.presentation.map.MapChromeEndReserve
+import com.orienteer.app.presentation.map.MapZoomControls
 import com.orienteer.app.presentation.map.applyBasemapStyle
+import com.orienteer.app.presentation.map.disableBuiltInZoomButtons
 import com.orienteer.app.ui.icons.OrienteerIcons
 import com.orienteer.app.ui.theme.OrienteerSpacing
 import com.orienteer.app.util.GeoUtils
@@ -83,7 +86,6 @@ fun EndpointPickerScreen(
     initialFinish: GeoPoint?,
     initialLocked: List<GeoPoint> = emptyList(),
     initialAnyOrder: Boolean = false,
-    recentSets: List<CoursePointsSet> = emptyList(),
     favoriteSets: List<CoursePointsSet> = emptyList(),
     basemapStyle: BasemapStyle,
     /** Same setting as map preview — classic IOF purple vs filled app badges. */
@@ -91,9 +93,8 @@ fun EndpointPickerScreen(
     resolveGps: suspend () -> GeoPoint?,
     onCycleBasemap: () -> Unit,
     onApplySavedSet: (CoursePointsSet) -> Unit = {},
-    onDeleteRecent: (String) -> Unit = {},
     onDeleteFavorite: (String) -> Unit = {},
-    onSaveFavorite: suspend () -> List<CoursePointsSet>? = { null },
+    onSaveFavorite: suspend (CoursePointsSet) -> List<CoursePointsSet>? = { null },
     onReplaceFavorite: (removeId: String, set: CoursePointsSet) -> Unit = { _, _ -> },
     onConfirm: (
         start: GeoPoint?,
@@ -126,6 +127,32 @@ fun EndpointPickerScreen(
     var status by remember { mutableStateOf<String?>(null) }
     var replaceCandidates by remember { mutableStateOf<List<CoursePointsSet>?>(null) }
     var pendingFavorite by remember { mutableStateOf<CoursePointsSet?>(null) }
+    /** Fingerprint starred optimistically until [favoriteSets] includes it. */
+    var optimisticFavoriteFinger by remember { mutableStateOf<String?>(null) }
+    var showUnfavoriteConfirm by remember { mutableStateOf(false) }
+
+    fun draftSet(id: String = "draft"): CoursePointsSet? {
+        val s = start ?: return null
+        return CoursePointsSet(
+            id = id,
+            savedAtMs = 0L,
+            start = s,
+            finish = if (finishAtStart) null else finish,
+            locked = locked,
+            anyOrder = anyOrder,
+            usedGpsStart = false
+        )
+    }
+
+    val currentFingerprint = remember(start, finish, finishAtStart, locked, anyOrder) {
+        draftSet()?.let { CoursePointsCatalog.fingerprint(it) }
+    }
+    val matchingFavoriteId = remember(currentFingerprint, favoriteSets) {
+        val finger = currentFingerprint ?: return@remember null
+        favoriteSets.firstOrNull { CoursePointsCatalog.fingerprint(it) == finger }?.id
+    }
+    val isFavorited = matchingFavoriteId != null ||
+        (optimisticFavoriteFinger != null && optimisticFavoriteFinger == currentFingerprint)
 
     LaunchedEffect(Unit) {
         Configuration.getInstance().userAgentValue = context.packageName
@@ -209,11 +236,11 @@ fun EndpointPickerScreen(
         }
         locked.forEachIndexed { index, point ->
             val selected = selectedLockedIndex == index
-            val label = if (anyOrder) "CP" else "${index + 1}"
+            val label = "${index + 1}"
             map.overlays.add(
                 Marker(map).apply {
                     position = OsmGeoPoint(point.latitude, point.longitude)
-                    title = if (anyOrder) "Checkpoint" else "Checkpoint ${index + 1}"
+                    title = "Checkpoint ${index + 1}"
                     setIcon(
                         CheckpointMarkerIcon.create(
                             context = ctx,
@@ -355,7 +382,7 @@ fun EndpointPickerScreen(
                     FilterChip(
                         selected = activePin == ActivePin.Checkpoint && selectedLockedIndex == null,
                         onClick = {
-                            // Add mode: next map tap places a new locked CP (does not move the last one).
+                            // Add mode: next map tap places a new locked point (does not move the last one).
                             activePin = ActivePin.Checkpoint
                             selectedLockedIndex = null
                         },
@@ -414,20 +441,21 @@ fun EndpointPickerScreen(
                             text = "Any order",
                             style = MaterialTheme.typography.bodyMedium
                         )
-                        Text(
-                            text = " — locked points may reshuffle each Generate",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
-                if (recentSets.isNotEmpty() || favoriteSets.isNotEmpty()) {
+                Text(
+                    text = "Favorites",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = OrienteerSpacing.xxs)
+                )
+                if (favoriteSets.isEmpty()) {
                     Text(
-                        text = "Saved",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = OrienteerSpacing.xxs)
+                        text = "None yet",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                } else {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -436,19 +464,8 @@ fun EndpointPickerScreen(
                     ) {
                         favoriteSets.forEach { set ->
                             FilterChip(
-                                selected = false,
-                                onClick = { loadSet(set) },
-                                label = {
-                                    Text(
-                                        "★ ${CoursePointsCatalog.autoLabel(set)}",
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                }
-                            )
-                        }
-                        recentSets.forEach { set ->
-                            FilterChip(
-                                selected = false,
+                                selected =
+                                    CoursePointsCatalog.fingerprint(set) == currentFingerprint,
                                 onClick = { loadSet(set) },
                                 label = {
                                     Text(
@@ -478,7 +495,7 @@ fun EndpointPickerScreen(
                                     activePin = ActivePin.Checkpoint
                                 },
                                 label = {
-                                    Text(if (anyOrder) "CP" else "${index + 1}")
+                                    Text("${index + 1}")
                                 },
                                 trailingIcon = {
                                     TextButton(
@@ -504,20 +521,10 @@ fun EndpointPickerScreen(
                 }
                 Text(
                     text = when {
-                        activePin == ActivePin.Checkpoint && selectedLockedIndex != null -> {
-                            val n = selectedLockedIndex!! + 1
-                            if (anyOrder) {
-                                "Tap map to move the selected checkpoint"
-                            } else {
-                                "Tap map to move checkpoint #$n"
-                            }
-                        }
+                        activePin == ActivePin.Checkpoint && selectedLockedIndex != null ->
+                            "Tap map to move checkpoint"
                         activePin == ActivePin.Checkpoint ->
-                            if (locked.isEmpty()) {
-                                "Tap map to place a locked checkpoint"
-                            } else {
-                                "Tap map to add another locked checkpoint"
-                            }
+                            "Tap map to place checkpoint"
                         else -> statusLabel
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -540,6 +547,7 @@ fun EndpointPickerScreen(
                     MapView(ctx).apply {
                         setLayerType(View.LAYER_TYPE_HARDWARE, null)
                         applyBasemapStyle(this, ctx, basemapStyle)
+                        disableBuiltInZoomButtons()
                         setMultiTouchControls(true)
                         controller.setZoom(15.0)
                         val center = start ?: GeoPoint(56.95, 24.10)
@@ -597,7 +605,18 @@ fun EndpointPickerScreen(
                 basemapStyle = basemapStyle,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(start = OrienteerSpacing.sm, bottom = OrienteerSpacing.sm)
+                    .padding(
+                        start = OrienteerSpacing.sm,
+                        bottom = OrienteerSpacing.sm,
+                        end = MapChromeEndReserve
+                    )
+            )
+            MapZoomControls(
+                onZoomIn = { mapView?.controller?.zoomIn() },
+                onZoomOut = { mapView?.controller?.zoomOut() },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = OrienteerSpacing.md, bottom = OrienteerSpacing.sm)
             )
         }
 
@@ -647,42 +666,75 @@ fun EndpointPickerScreen(
                     )
                     IconButton(
                         onClick = {
-                            val s = start
-                            if (s == null) {
+                            if (isFavorited) {
+                                showUnfavoriteConfirm = true
+                                return@IconButton
+                            }
+                            val set = draftSet(UUID.randomUUID().toString())?.copy(
+                                savedAtMs = System.currentTimeMillis()
+                            )
+                            if (set == null) {
                                 status = "Set Start before starring."
                                 return@IconButton
                             }
-                            val set = CoursePointsSet(
-                                id = UUID.randomUUID().toString(),
-                                savedAtMs = System.currentTimeMillis(),
-                                start = s,
-                                finish = if (finishAtStart) null else finish,
-                                locked = locked,
-                                anyOrder = anyOrder,
-                                usedGpsStart = false
-                            )
+                            optimisticFavoriteFinger = currentFingerprint
+                            status = "Saved to favorites"
                             scope.launch {
-                                // Sync local draft into active before favorite write.
-                                onApplySavedSet(set)
-                                val full = onSaveFavorite()
-                                if (full != null) {
-                                    pendingFavorite = set
-                                    replaceCandidates = full
-                                    status = "Favorites full — pick one to replace."
-                                } else {
-                                    status = "Saved to favorites"
+                                runCatching {
+                                    val full = onSaveFavorite(set)
+                                    if (full != null) {
+                                        optimisticFavoriteFinger = null
+                                        pendingFavorite = set
+                                        replaceCandidates = full
+                                        status = "Favorites full — pick one to replace."
+                                    }
+                                }.onFailure {
+                                    optimisticFavoriteFinger = null
+                                    status = "Could not save favorite"
                                 }
                             }
                         }
                     ) {
                         Icon(
                             OrienteerIcons.Star,
-                            contentDescription = "Save to favorites"
+                            contentDescription = if (isFavorited) {
+                                "Remove from favorites"
+                            } else {
+                                "Save to favorites"
+                            },
+                            tint = if (isFavorited) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                            }
                         )
                     }
                 }
             }
         }
+    }
+
+    if (showUnfavoriteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showUnfavoriteConfirm = false },
+            title = { Text("Remove favorite?") },
+            text = { Text("Remove this points set from favorites?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        matchingFavoriteId?.let(onDeleteFavorite)
+                        optimisticFavoriteFinger = null
+                        showUnfavoriteConfirm = false
+                        status = "Removed from favorites"
+                    }
+                ) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUnfavoriteConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     val candidates = replaceCandidates

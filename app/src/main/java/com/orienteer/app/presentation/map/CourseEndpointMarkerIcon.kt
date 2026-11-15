@@ -156,26 +156,25 @@ object CourseEndpointMarkerIcon {
                 canvas.drawPath(path, white)
             }
             Kind.Finish -> {
+                // Same filled-badge language as numbered controls: solid disc + white collar + "F".
                 canvas.drawCircle(center, center, radius, fill)
                 canvas.drawCircle(center, center, radius - strokePx / 2f, white)
-                // Inner ring reads as IOF double-circle while staying a filled badge.
-                val inner = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    style = Paint.Style.STROKE
-                    strokeWidth = strokePx * 0.85f
+                val letter = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.FILL
                     color = Color.WHITE
+                    textAlign = Paint.Align.CENTER
+                    textSize = radius * 1.05f
+                    isFakeBoldText = true
                 }
-                canvas.drawCircle(center, center, radius * 0.55f, inner)
+                val fm = letter.fontMetrics
+                val textY = center - (fm.ascent + fm.descent) / 2f
+                canvas.drawText("F", center, textY, letter)
             }
             Kind.Combined -> {
+                // Return-to-start: disc + inset start triangle (no double-ring clutter).
                 canvas.drawCircle(center, center, radius, fill)
                 canvas.drawCircle(center, center, radius - strokePx / 2f, white)
-                val inner = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    style = Paint.Style.STROKE
-                    strokeWidth = strokePx * 0.75f
-                    color = Color.WHITE
-                }
-                canvas.drawCircle(center, center, radius * 0.62f, inner)
-                val path = trianglePath(center, radius * 0.42f)
+                val path = trianglePath(center, radius * 0.48f)
                 val triFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     style = Paint.Style.FILL
                     color = Color.WHITE

@@ -421,11 +421,11 @@ class LocationTrackingService : LifecycleService() {
         )
     }
 
-    /** e.g. "CP 2/5" or "Finish". */
+    /** e.g. "2/5" or "Finish". */
     private fun checkpointProgressLabel(session: RunSession): String {
-        val currentRoute = route ?: return "CP —"
+        val currentRoute = route ?: return "—"
         val total = currentRoute.waypointCount
-        if (total <= 0) return "CP —"
+        if (total <= 0) return "—"
         val next = currentRoute.checkpoints.getOrNull(session.currentCheckpointIdx)
         val reached = currentRoute.checkpoints
             .take(session.currentCheckpointIdx)
@@ -435,7 +435,7 @@ class LocationTrackingService : LifecycleService() {
             next.isStart && session.currentCheckpointIdx >= currentRoute.checkpoints.lastIndex ->
                 "Finish ($reached/$total)"
             next.isStart -> "Start"
-            else -> "CP ${next.id}/$total"
+            else -> "${next.id}/$total"
         }
     }
 

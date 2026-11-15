@@ -159,6 +159,7 @@ data class PdfRect(
 }
 
 data class PdfPageRegions(
+    /** Unused — real O-map PDFs have no title strip; kept for call-site compat. */
     val titleBaseline: Float,
     val mapRect: PdfRect,
     val legendRect: PdfRect?
@@ -166,28 +167,27 @@ data class PdfPageRegions(
 
 /**
  * A4-ish PDF layout in points (72 dpi). Matches [RoutePdfExporter] page size.
+ * No header band — map uses the printable area like OCAD / Purple Pen exports.
  */
 object PdfPageLayout {
     const val PAGE_WIDTH = 595f
     const val PAGE_HEIGHT = 842f
-    const val MARGIN = 36f
-    private const val TITLE_TEXT_SIZE = 14f
-    private const val TITLE_PADDING = 24f
+    /** Narrow edge margin — O-map PDFs print nearly edge-to-edge. */
+    const val MARGIN = 10f
     private const val LEGEND_LINE_HEIGHT = 11f
-    private const val LEGEND_GAP = 8f
-    private const val MIN_MAP_HEIGHT = 280f
+    private const val LEGEND_GAP = 6f
+    private const val MIN_MAP_HEIGHT = 400f
     /** Preferred IOF cell height; may shrink when many controls. */
     const val IOF_CELL_HEIGHT = 14f
 
     fun compute(includeLegends: Boolean, legendLineCount: Int): PdfPageRegions {
-        val titleBaseline = MARGIN + TITLE_PADDING
-        val contentTop = MARGIN + TITLE_PADDING * 2 + TITLE_TEXT_SIZE
+        val contentTop = MARGIN
         val contentBottom = PAGE_HEIGHT - MARGIN
         val contentWidth = PAGE_WIDTH - 2 * MARGIN
 
         if (!includeLegends || legendLineCount <= 0) {
             return PdfPageRegions(
-                titleBaseline = titleBaseline,
+                titleBaseline = MARGIN,
                 mapRect = PdfRect(MARGIN, contentTop, MARGIN + contentWidth, contentBottom),
                 legendRect = null
             )
@@ -200,7 +200,7 @@ object PdfPageLayout {
         val mapBottom = legendTop - LEGEND_GAP
 
         return PdfPageRegions(
-            titleBaseline = titleBaseline,
+            titleBaseline = MARGIN,
             mapRect = PdfRect(MARGIN, contentTop, MARGIN + contentWidth, mapBottom),
             legendRect = PdfRect(MARGIN, legendTop, MARGIN + contentWidth, contentBottom)
         )
@@ -208,14 +208,13 @@ object PdfPageLayout {
 
     /** Layout with room for an IOF-style control description grid ([gridRowCount] rows). */
     fun computeForControlSheet(includeSheet: Boolean, gridRowCount: Int): PdfPageRegions {
-        val titleBaseline = MARGIN + TITLE_PADDING
-        val contentTop = MARGIN + TITLE_PADDING * 2 + TITLE_TEXT_SIZE
+        val contentTop = MARGIN
         val contentBottom = PAGE_HEIGHT - MARGIN
         val contentWidth = PAGE_WIDTH - 2 * MARGIN
 
         if (!includeSheet || gridRowCount <= 0) {
             return PdfPageRegions(
-                titleBaseline = titleBaseline,
+                titleBaseline = MARGIN,
                 mapRect = PdfRect(MARGIN, contentTop, MARGIN + contentWidth, contentBottom),
                 legendRect = null
             )
@@ -229,7 +228,7 @@ object PdfPageLayout {
         val mapBottom = legendTop - LEGEND_GAP
 
         return PdfPageRegions(
-            titleBaseline = titleBaseline,
+            titleBaseline = MARGIN,
             mapRect = PdfRect(MARGIN, contentTop, MARGIN + contentWidth, mapBottom),
             legendRect = PdfRect(MARGIN, legendTop, MARGIN + contentWidth, contentBottom)
         )

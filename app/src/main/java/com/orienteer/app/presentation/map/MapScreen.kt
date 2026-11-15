@@ -16,7 +16,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.orienteer.app.BuildConfig
 import com.orienteer.app.R
+import com.orienteer.app.debug.ScreenshotDemoMode
 import com.orienteer.app.util.PdfExportScale
 import com.orienteer.app.util.RoutePdfExporter
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -48,7 +50,9 @@ fun MapScreen(
     val generationRunning = setupUiState is SetupUiState.GeneratingRoute ||
         setupUiState is SetupUiState.RefiningRoute
     var mapViewRef by remember { mutableStateOf<MapView?>(null) }
-    var routeSheetExpanded by remember { mutableStateOf(true) }
+    var routeSheetExpanded by remember {
+        mutableStateOf(!(BuildConfig.DEBUG && ScreenshotDemoMode.collapseSheetsForCapture))
+    }
     var routeSheetVisibleHeightPx by remember { mutableFloatStateOf(0f) }
     val mapColors = mapOverlayColors()
     val primaryArgb = MaterialTheme.colorScheme.primary.toArgb()
@@ -166,7 +170,7 @@ fun MapScreen(
                         .padding(
                             start = OrienteerSpacing.sm,
                             bottom = OrienteerSpacing.sm,
-                            end = OrienteerSpacing.sm
+                            end = MapChromeEndReserve
                         )
                         // Translate with the sheet — no layout pass every frame.
                         .graphicsLayer {
@@ -174,13 +178,7 @@ fun MapScreen(
                         }
                 )
 
-                FloatingActionButton(
-                    onClick = {
-                        val center = route.startPoint
-                        mapViewRef?.controller?.setCenter(
-                            OsmGeoPoint(center.latitude, center.longitude)
-                        )
-                    },
+                Column(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .navigationBarsPadding()
@@ -191,10 +189,25 @@ fun MapScreen(
                         .graphicsLayer {
                             translationY = -routeSheetVisibleHeightPx
                         },
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    contentColor = MaterialTheme.colorScheme.primary
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(OrienteerSpacing.xs)
                 ) {
-                    Icon(OrienteerIcons.MyLocation, contentDescription = "Recenter")
+                    MapZoomControls(
+                        onZoomIn = { mapViewRef?.controller?.zoomIn() },
+                        onZoomOut = { mapViewRef?.controller?.zoomOut() }
+                    )
+                    FloatingActionButton(
+                        onClick = {
+                            val center = route.startPoint
+                            mapViewRef?.controller?.setCenter(
+                                OsmGeoPoint(center.latitude, center.longitude)
+                            )
+                        },
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = MaterialTheme.colorScheme.primary
+                    ) {
+                        Icon(OrienteerIcons.MyLocation, contentDescription = "Recenter")
+                    }
                 }
 
                 RouteBottomSheet(
@@ -210,7 +223,8 @@ fun MapScreen(
                         DistanceStatCard(
                             label = "Air",
                             value = GeoUtils.formatDistanceDetailed(route.airDistanceM),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            compact = true
                         )
                         DistanceStatCard(
                             label = "Path",
@@ -220,10 +234,11 @@ fun MapScreen(
                                 route.pathToAirRatio?.let { ratio -> "(${"%.1f".format(ratio)}× air)" }
                             },
                             modifier = Modifier.weight(1f),
-                            emphasized = true
+                            emphasized = true,
+                            compact = true
                         )
                     }
-                    Spacer(Modifier.height(OrienteerSpacing.md))
+                    Spacer(Modifier.height(OrienteerSpacing.sm))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly
@@ -231,7 +246,7 @@ fun MapScreen(
                         StatChip(OrienteerIcons.Flag, "${route.waypointCount}", "Checkpoints")
                         StatChip(OrienteerIcons.Schedule, "${(route.estimatedDurationS / 60).toInt()} min", "Est. time")
                     }
-                    Spacer(Modifier.height(OrienteerSpacing.md))
+                    Spacer(Modifier.height(OrienteerSpacing.sm))
                     if (!route.isDraft && generationError == null) {
                         OrienteerGhostButton(
                             text = shareGpxLabel,
@@ -375,9 +390,25 @@ private fun StatChip(
     value: String,
     label: String
 ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(14.dp)
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }

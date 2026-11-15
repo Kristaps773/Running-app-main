@@ -205,7 +205,7 @@ class HistoryViewModel @Inject constructor(
             val label = when {
                 isFinish -> "Finish"
                 cp.isStart -> "Start"
-                else -> "CP ${cp.id}"
+                else -> "#${cp.id}"
             }
             val status = when {
                 cp.id in skippedIds -> CheckpointVisitStatus.UNREACHABLE

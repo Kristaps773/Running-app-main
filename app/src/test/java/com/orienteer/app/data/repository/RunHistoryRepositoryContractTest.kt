@@ -137,10 +137,18 @@ private class FakeRunSessionDao : RunSessionDao {
     override suspend fun getLastSessionForRoute(routeId: String): RunSessionEntity? =
         rows.values.filter { it.routeId == routeId }.maxByOrNull { it.startedAt }
 
+    override suspend fun getSessionsForRoute(routeId: String): List<RunSessionEntity> =
+        rows.values.filter { it.routeId == routeId }
+
     override suspend fun getSessionById(sessionId: Long): RunSessionEntity? = rows[sessionId]
 
     override suspend fun deleteSessionById(sessionId: Long) {
         rows.remove(sessionId)
+        emit()
+    }
+
+    override suspend fun deleteSessionsForRoute(routeId: String) {
+        rows.entries.removeIf { it.value.routeId == routeId }
         emit()
     }
 

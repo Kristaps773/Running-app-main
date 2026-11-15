@@ -46,9 +46,9 @@ enum class OrienteeringPrintScale(val ratio: Int) {
         private const val SHORT_COURSE_M = 3000.0
         private const val MEDIUM_COURSE_M = 6000.0
 
-        /** On-screen badge scale is 1f; PDF badges stay small so controls pinpoint map features. */
-        private const val PDF_BASELINE_AT_15000 = 0.28f
-        private const val PDF_MARKER_MAX = 0.48f
+        /** On-screen badge scale is 1f; PDF 1:15000 baseline is smaller. */
+        private const val PDF_BASELINE_AT_15000 = 0.42f
+        private const val PDF_MARKER_MAX = 0.85f
 
         fun fittingScales(span: RouteSpanM, frame: MapFrameMm): List<OrienteeringPrintScale> =
             entries.filter { it.fits(span, frame) }
@@ -162,6 +162,47 @@ fun routeSpanForPrintScale(
 }
 
 /**
+ * Geometry for PDF Fit-to-page / camera framing.
+ * Always keeps checkpoints; keeps polyline vertices only when they stay within
+ * [maxExtraM] of the control envelope so one bad coordinate cannot zoom the
+ * export out to country scale.
+ */
+fun pointsForPdfExportBounds(
+    checkpoints: List<GeoPoint>,
+    polyline: List<GeoPoint>,
+    maxExtraM: Double = 8_000.0
+): List<GeoPoint> {
+    if (checkpoints.isEmpty()) return polyline
+    if (polyline.isEmpty()) return checkpoints
+    var minLat = checkpoints.first().latitude
+    var maxLat = minLat
+    var minLon = checkpoints.first().longitude
+    var maxLon = minLon
+    for (p in checkpoints) {
+        minLat = minOf(minLat, p.latitude)
+        maxLat = maxOf(maxLat, p.latitude)
+        minLon = minOf(minLon, p.longitude)
+        maxLon = maxOf(maxLon, p.longitude)
+    }
+    val midLat = (minLat + maxLat) / 2.0
+    val padLat = maxExtraM / 111_320.0
+    val cosLat = kotlin.math.cos(Math.toRadians(midLat)).coerceAtLeast(1e-6)
+    val padLon = maxExtraM / (111_320.0 * cosLat)
+    val south = minLat - padLat
+    val north = maxLat + padLat
+    val west = minLon - padLon
+    val east = maxLon + padLon
+    val out = ArrayList<GeoPoint>(checkpoints.size + polyline.size)
+    out.addAll(checkpoints)
+    for (p in polyline) {
+        if (p.latitude in south..north && p.longitude in west..east) {
+            out.add(p)
+        }
+    }
+    return out
+}
+
+/**
  * OSM web-mercator metres-per-pixel at [latitudeDeg] for zoom [zoom].
  */
 fun metresPerPixelAtZoom(latitudeDeg: Double, zoom: Double): Double {
@@ -176,4 +217,18 @@ fun zoomForMetresPerPixel(latitudeDeg: Double, metresPerPixel: Double): Double {
     val cosLat = cos(Math.toRadians(latitudeDeg)).coerceAtLeast(1e-6)
     val mpp = metresPerPixel.coerceAtLeast(1e-6)
     return Math.log(156543.03392 * cosLat / mpp) / Math.log(2.0)
+}
+
+/**
+ * Snaps a raw print ratio to a "nice" orienteering label (ending in 0 or 5).
+ * Prefers the nearest value **not finer** than [raw] (ceil on the step grid).
+ */
+fun nicePrintRatio(raw: Int): Int {
+    val r = raw.coerceIn(500, 100_000)
+    val step = when {
+        r < 10_000 -> 500
+        r < 25_000 -> 1_000
+        else -> 2_500
+    }
+    return ((r + step - 1) / step) * step
 }

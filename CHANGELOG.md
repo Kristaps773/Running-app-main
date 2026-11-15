@@ -4,7 +4,31 @@ Play release history reconstructed from Cursor chats and AAB build dates.
 **Do not keep a stack of old `.aab` files as history** — use this file + git commits.
 Local Play upload copies live only under `store-assets/releases/` (gitignored); keep the latest AAB.
 
-Current app version in source: **1.3.24** (`versionCode` 29).
+Current app version in source: **1.3.30** (`versionCode` 35).
+
+## 1.3.30 (vc35) — 2026-11-08
+
+Screenshot demo / run & navigation follow-ups on top of 1.3.29. Play AAB + debug install.
+
+## 1.3.29 (vc34) — 2026-11-08
+
+Landmark attach planner, map zoom controls, setup/UI polish; built after other agents’ unit tests finished.
+
+## 1.3.28 (vc33) — 2026-11-08
+
+Setup / history polish and route-generation follow-ups on top of the restored 1.3.27 codebase.
+
+## 1.3.27 (vc32) — 2026-11-06
+
+Post–Play 1.3.26 follow-ups restored into source: PDF vector course export + print-scale bounds, course-reuse snapshots with locked pins / safe JSON (R8), local lead-ribbon path overlay (lookahead fade), course-points store hand decode, endpoint picker + setup refinements, polyline-progress polish.
+
+## 1.3.26 (vc31) — 2026-11-06
+
+StarBorder / print-scale and course-points follow-ups after crash-fix recompiles. **Play Store upload** (this is the last AAB confirmed on the internal track before 1.3.27).
+
+## 1.3.25 (vc30) — 2026-11-05
+
+Route polyline progress + crash-fix follow-ups, course points / setup polish after agent tests.
 
 ## 1.3.24 (vc29) — 2026-11-05
 

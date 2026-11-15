@@ -14,18 +14,16 @@ class SetupLayoutMetricsTest {
         assertEquals(4f, metrics.topSpacerDp)
         assertEquals(26f, metrics.distanceFontSp)
         assertFalse(metrics.showTagline)
-        assertFalse(metrics.showEstimateStrip)
         assertTrue(metrics.bottomContentPadDp <= 8f)
     }
 
     @Test
-    fun mediumScreenHidesEstimateToKeepSettingsVisible() {
+    fun mediumScreenHidesTaglineToKeepSettingsVisible() {
         val metrics = setupLayoutMetrics(700f)
 
         assertEquals(6f, metrics.topSpacerDp)
         assertEquals(30f, metrics.distanceFontSp)
         assertFalse(metrics.showTagline)
-        assertFalse(metrics.showEstimateStrip)
     }
 
     @Test
@@ -35,7 +33,6 @@ class SetupLayoutMetricsTest {
         assertEquals(10f, metrics.topSpacerDp)
         assertEquals(34f, metrics.distanceFontSp)
         assertTrue(metrics.showTagline)
-        assertTrue(metrics.showEstimateStrip)
     }
 
     @Test

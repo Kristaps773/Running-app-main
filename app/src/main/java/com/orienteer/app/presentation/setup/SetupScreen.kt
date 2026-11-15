@@ -18,16 +18,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -55,6 +51,8 @@ import com.orienteer.app.domain.CourseEndpoints
 import com.orienteer.app.domain.LockedCoursePoints
 import com.orienteer.app.domain.ProAccess
 import com.orienteer.app.presentation.components.DistanceChip
+import com.orienteer.app.presentation.components.DistanceChipHeight
+import com.orienteer.app.presentation.components.DistanceOtherField
 import com.orienteer.app.presentation.components.PrimaryGreenButton
 import com.orienteer.app.presentation.components.SettingsGroupedList
 import com.orienteer.app.presentation.components.SettingsListRow
@@ -63,6 +61,7 @@ import com.orienteer.app.ui.icons.OrienteerIcons
 import com.orienteer.app.ui.theme.OrienteerCardShape
 import com.orienteer.app.ui.theme.OrienteerInnerShape
 import com.orienteer.app.ui.theme.OrienteerRadius
+import com.orienteer.app.ui.theme.orienteerSliderColors
 import com.orienteer.app.ui.theme.OrienteerSpacing
 import com.orienteer.app.ui.theme.OrienteerTheme
 import com.orienteer.app.ui.theme.ThemeMode
@@ -73,6 +72,7 @@ fun SetupScreen(
     onRouteReady: (Route) -> Unit,
     onViewPreviousRoute: (String) -> Unit,
     onOpenHistory: () -> Unit = {},
+    onOpenFavorites: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onOpenEndpointPicker: () -> Unit = {},
     hasLocationPermission: Boolean = true,
@@ -83,12 +83,11 @@ fun SetupScreen(
     val distanceKm by viewModel.distanceKm.collectAsStateWithLifecycle()
     val minCheckpoints by viewModel.minCheckpoints.collectAsStateWithLifecycle()
     val maxCheckpoints by viewModel.maxCheckpoints.collectAsStateWithLifecycle()
-    val latestRoute by viewModel.latestRoute.collectAsStateWithLifecycle()
+    val lastCommittedRoute by viewModel.lastCommittedRoute.collectAsStateWithLifecycle()
     val customStart by viewModel.customStart.collectAsStateWithLifecycle()
     val customFinish by viewModel.customFinish.collectAsStateWithLifecycle()
     val lockedCheckpoints by viewModel.lockedCheckpoints.collectAsStateWithLifecycle()
     val lockedAnyOrder by viewModel.lockedAnyOrder.collectAsStateWithLifecycle()
-    val presetDistances = remember { listOf(3.0, 5.0, 10.0) }
     var customDistanceActive by remember { mutableStateOf(false) }
     var customDistanceText by remember { mutableStateOf("") }
     val minDistanceKm = remember(customStart, customFinish, lockedCheckpoints, lockedAnyOrder) {
@@ -112,9 +111,10 @@ fun SetupScreen(
     val hasCustomCoursePoints =
         customStart != null || customFinish != null || lockedCheckpoints.isNotEmpty()
 
+    // Keep typed "Other" text in sync if the user already opened that field,
+    // but never auto-open it (slider / restored km must not summon the keyboard).
     LaunchedEffect(distanceKm) {
-        if (distanceKm !in presetDistances && !customDistanceActive) {
-            customDistanceActive = true
+        if (customDistanceActive) {
             customDistanceText = "%.1f".format(distanceKm)
         }
     }
@@ -144,7 +144,7 @@ fun SetupScreen(
         minCheckpoints = minCheckpoints,
         maxCheckpoints = maxCheckpoints,
         lockedCount = lockedCheckpoints.size,
-        latestRouteId = latestRoute?.id,
+        latestRouteId = lastCommittedRoute?.id,
         customDistanceActive = customDistanceActive,
         customDistanceText = customDistanceText,
         hasLocationPermission = hasLocationPermission,
@@ -173,9 +173,11 @@ fun SetupScreen(
         onSetDistance = viewModel::setDistance,
         onSetCheckpointWindow = viewModel::setCheckpointWindow,
         onGenerate = viewModel::generateRoute,
+        onCancelGeneration = viewModel::cancelGeneration,
         onDismissError = viewModel::dismissError,
         onViewPreviousRoute = onViewPreviousRoute,
         onOpenHistory = onOpenHistory,
+        onOpenFavorites = onOpenFavorites,
         onOpenSettings = onOpenSettings,
         onOpenEndpointPicker = onOpenEndpointPicker,
         onClearEndpoints = viewModel::clearCourseEndpoints,
@@ -204,15 +206,24 @@ private fun SetupScreenContent(
     onSetDistance: (Double) -> Unit,
     onSetCheckpointWindow: (Int, Int) -> Unit = { _, _ -> },
     onGenerate: () -> Unit,
+    onCancelGeneration: () -> Unit = {},
     onDismissError: () -> Unit,
     onViewPreviousRoute: (String) -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenFavorites: () -> Unit = {},
     onOpenSettings: () -> Unit,
     onOpenEndpointPicker: () -> Unit = {},
     onClearEndpoints: () -> Unit = {},
     onRequestLocationPermission: () -> Unit
 ) {
     val cardRadius = OrienteerRadius.card
+    var pendingCancelGeneration by remember { mutableStateOf(false) }
+    val generationInProgress = uiState is SetupUiState.LocatingGps ||
+        uiState is SetupUiState.GeneratingRoute ||
+        uiState is SetupUiState.RefiningRoute
+    LaunchedEffect(generationInProgress) {
+        if (!generationInProgress) pendingCancelGeneration = false
+    }
 
     StitchBackground {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -282,24 +293,9 @@ private fun SetupScreenContent(
                                 color = MaterialTheme.colorScheme.primary,
                                 letterSpacing = (-1).sp
                             )
-                            Text(
-                                text = "kilometers",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            if (hasLockedFloor) {
+                            if (hasLockedFloor || isOneWay) {
                                 Text(
-                                    text = "At least %.1f km to use all points."
-                                        .format(minDistanceKm),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(top = 4.dp)
-                                )
-                            } else if (isOneWay) {
-                                Text(
-                                    text = "At least %.1f km (straight to finish). Extra adds checkpoints."
-                                        .format(minDistanceKm),
+                                    text = "Min %.1f km".format(minDistanceKm),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center,
@@ -317,22 +313,16 @@ private fun SetupScreenContent(
                             Slider(
                                 value = sliderValue,
                                 onValueChange = {
-                                    if (!customDistanceActive && it.toDouble() !in listOf(3.0, 5.0, 10.0)) {
-                                        onCustomDistanceActiveChange(true)
+                                    // Slider is drag-only: never open the "Other" text field / keyboard.
+                                    if (customDistanceActive) {
+                                        onCustomDistanceActiveChange(false)
                                     }
                                     onSetDistance(it.toDouble())
-                                    if (customDistanceActive) {
-                                        onCustomDistanceTextChange("%.1f".format(it))
-                                    }
                                 },
                                 valueRange = sliderMin..sliderMax.coerceAtLeast(sliderMin + 0.1f),
                                 steps = 40,
                                 modifier = Modifier.fillMaxWidth(),
-                                colors = SliderDefaults.colors(
-                                    thumbColor = MaterialTheme.colorScheme.primary,
-                                    activeTrackColor = MaterialTheme.colorScheme.primary,
-                                    inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest
-                                )
+                                colors = orienteerSliderColors()
                             )
                             Spacer(Modifier.height(OrienteerSpacing.xxs))
                             Row(horizontalArrangement = Arrangement.spacedBy(OrienteerSpacing.xs)) {
@@ -352,38 +342,31 @@ private fun SetupScreenContent(
                                 }
                             }
                             Spacer(Modifier.height(OrienteerSpacing.xxs))
-                            if (customDistanceActive) {
-                                OutlinedTextField(
-                                    value = customDistanceText,
-                                    onValueChange = { text ->
-                                        val filtered = text.filter { it.isDigit() || it == '.' }
-                                        onCustomDistanceTextChange(filtered)
-                                        filtered.toDoubleOrNull()?.let(onSetDistance)
-                                    },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(innerShape),
-                                    singleLine = true,
-                                    suffix = { Text("km") },
-                                    placeholder = { Text("Custom distance") },
-                                    shape = innerShape,
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(DistanceChipHeight)
+                            ) {
+                                if (customDistanceActive) {
+                                    DistanceOtherField(
+                                        value = customDistanceText,
+                                        onValueChange = { text ->
+                                            onCustomDistanceTextChange(text)
+                                            CustomDistanceInput.parseKm(text)?.let(onSetDistance)
+                                        },
+                                        modifier = Modifier.fillMaxSize()
                                     )
-                                )
-                            } else {
-                                DistanceChip(
-                                    label = "Other",
-                                    selected = false,
-                                    onClick = {
-                                        onCustomDistanceActiveChange(true)
-                                        onCustomDistanceTextChange("%.1f".format(distanceKm))
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                } else {
+                                    DistanceChip(
+                                        label = "Other",
+                                        selected = false,
+                                        onClick = {
+                                            onCustomDistanceActiveChange(true)
+                                            onCustomDistanceTextChange("%.1f".format(distanceKm))
+                                        },
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
                             }
                         }
                     }
@@ -408,21 +391,13 @@ private fun SetupScreenContent(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Checkpoints",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = "intermediate (not start/finish)",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                            alpha = 0.85f
-                                        )
-                                    )
-                                }
+                                Text(
+                                    text = "Checkpoints",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.weight(1f)
+                                )
                                 Text(
                                     text = if (minCheckpoints == maxCheckpoints) {
                                         "$minCheckpoints"
@@ -468,11 +443,7 @@ private fun SetupScreenContent(
                                 steps = sliderSteps,
                                 enabled = sliderFloor < sliderCeil,
                                 modifier = Modifier.fillMaxWidth(),
-                                colors = SliderDefaults.colors(
-                                    thumbColor = MaterialTheme.colorScheme.outline,
-                                    activeTrackColor = MaterialTheme.colorScheme.outline,
-                                    inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest
-                                )
+                                colors = orienteerSliderColors()
                             )
                             Text(
                                 text = "Max $maxCheckpoints",
@@ -494,48 +465,8 @@ private fun SetupScreenContent(
                                 steps = sliderSteps,
                                 enabled = sliderFloor < sliderCeil,
                                 modifier = Modifier.fillMaxWidth(),
-                                colors = SliderDefaults.colors(
-                                    thumbColor = MaterialTheme.colorScheme.outline,
-                                    activeTrackColor = MaterialTheme.colorScheme.outline,
-                                    inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest
-                                )
+                                colors = orienteerSliderColors()
                             )
-                        }
-                    }
-
-                    if (layout.showEstimateStrip) {
-                        Spacer(Modifier.height(layout.sectionSpacerDp.dp))
-
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = OrienteerCardShape,
-                            color = MaterialTheme.colorScheme.surfaceContainerLow
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(
-                                        horizontal = OrienteerSpacing.sm,
-                                        vertical = OrienteerSpacing.xs
-                                    ),
-                                horizontalArrangement = Arrangement.spacedBy(OrienteerSpacing.xs)
-                            ) {
-                                val cpLabel = if (minCheckpoints == maxCheckpoints) {
-                                    "$minCheckpoints checkpoints"
-                                } else {
-                                    "$minCheckpoints–$maxCheckpoints checkpoints"
-                                }
-                                InfoChip(
-                                    icon = Icons.Default.LocationOn,
-                                    label = cpLabel,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                InfoChip(
-                                    icon = OrienteerIcons.Schedule,
-                                    label = "${estimateTime(distanceKm)} min est.",
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
                         }
                     }
 
@@ -553,6 +484,14 @@ private fun SetupScreenContent(
                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
                             )
                         }
+                        SettingsListRow(
+                            title = "Favorites",
+                            onClick = onOpenFavorites,
+                            flat = true
+                        )
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+                        )
                         SettingsListRow(
                             title = "Run history",
                             onClick = onOpenHistory,
@@ -639,38 +578,51 @@ private fun SetupScreenContent(
                                     else -> "Generate"
                                 },
                                 onClick = onGenerate,
-                                enabled = !isLoading && !isRefining,
+                                enabled = !generationInProgress,
                                 loading = isLoading,
-                                leadingIcon = if (!isLoading && !isRefining) OrienteerIcons.MyLocation else null,
+                                leadingIcon = if (!generationInProgress) OrienteerIcons.MyLocation else null,
                                 modifier = Modifier.weight(1f)
                             )
-                            Surface(
-                                onClick = onOpenEndpointPicker,
-                                enabled = !isLoading && !isRefining,
-                                shape = OrienteerCardShape,
-                                color = if (hasCustomCoursePoints) {
-                                    MaterialTheme.colorScheme.primaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceContainerHigh
-                                },
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                    Icon(
-                                        imageVector = OrienteerIcons.Flag,
-                                        contentDescription = if (isOneWay) "Start and finish" else "Set start / finish",
-                                        modifier = Modifier.size(22.dp),
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                            if (hasCustomCoursePoints) {
+                            if (generationInProgress) {
                                 TextButton(
-                                    onClick = onClearEndpoints,
-                                    enabled = !isLoading && !isRefining,
+                                    onClick = { pendingCancelGeneration = true },
                                     modifier = Modifier.height(48.dp)
                                 ) {
-                                    Text("Reset", style = MaterialTheme.typography.labelMedium)
+                                    Text("Cancel", style = MaterialTheme.typography.labelMedium)
+                                }
+                            } else {
+                                Surface(
+                                    onClick = onOpenEndpointPicker,
+                                    enabled = true,
+                                    shape = OrienteerCardShape,
+                                    color = if (hasCustomCoursePoints) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceContainerHigh
+                                    },
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                        Icon(
+                                            imageVector = OrienteerIcons.Flag,
+                                            contentDescription = if (isOneWay) "Start and finish" else "Set start / finish",
+                                            modifier = Modifier.size(22.dp),
+                                            tint = if (hasCustomCoursePoints) {
+                                                MaterialTheme.colorScheme.onPrimaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.primary
+                                            }
+                                        )
+                                    }
+                                }
+                                if (hasCustomCoursePoints) {
+                                    TextButton(
+                                        onClick = onClearEndpoints,
+                                        enabled = true,
+                                        modifier = Modifier.height(48.dp)
+                                    ) {
+                                        Text("Reset", style = MaterialTheme.typography.labelMedium)
+                                    }
                                 }
                             }
                         }
@@ -699,47 +651,31 @@ private fun SetupScreenContent(
                 }
             }
         }
-    }
-}
 
-@Composable
-private fun InfoChip(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    modifier: Modifier = Modifier
-) {
-    val shape = OrienteerInnerShape(OrienteerRadius.card, OrienteerSpacing.sm)
-    Surface(
-        modifier = modifier,
-        shape = shape,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh
-    ) {
-        Row(
-            modifier = Modifier.padding(
-                horizontal = OrienteerSpacing.sm,
-                vertical = OrienteerSpacing.xs
-            ),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                label,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1
+        if (pendingCancelGeneration) {
+            AlertDialog(
+                onDismissRequest = { pendingCancelGeneration = false },
+                title = { Text("Cancel route generation?") },
+                text = {
+                    Text("Stop generating this route? You can start again afterward.")
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            pendingCancelGeneration = false
+                            onCancelGeneration()
+                        }
+                    ) { Text("Stop generating") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingCancelGeneration = false }) {
+                        Text("Keep going")
+                    }
+                }
             )
         }
     }
 }
-
-private fun estimateTime(distanceKm: Double): Int =
-    (distanceKm * 6).toInt()
 
 @Preview(showBackground = true, name = "Setup — alpine light")
 @Composable
@@ -759,6 +695,7 @@ private fun SetupScreenPreview() {
             onDismissError = {},
             onViewPreviousRoute = {},
             onOpenHistory = {},
+            onOpenFavorites = {},
             onOpenSettings = {},
             onRequestLocationPermission = {}
         )

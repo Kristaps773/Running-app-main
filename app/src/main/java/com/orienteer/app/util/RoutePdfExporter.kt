@@ -10,19 +10,29 @@ import android.graphics.pdf.PdfDocument
 import android.graphics.Color
 import android.net.Uri
 import android.os.Environment
+import android.os.SystemClock
 import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.core.content.FileProvider
 import com.orienteer.app.R
 import com.orienteer.app.data.local.MapDisplayPreferences
 import com.orienteer.app.data.model.GeoPoint
 import com.orienteer.app.data.model.Route
+import com.orienteer.app.presentation.map.IOF_CONTROL_DIAMETER_M
+import com.orienteer.app.presentation.map.IofCourseGeometry
+import com.orienteer.app.data.local.BasemapStyle
+import com.orienteer.app.presentation.map.applyBasemapStyle
 import com.orienteer.app.presentation.map.applyRouteMapOverlays
 import com.orienteer.app.presentation.map.boundingBoxForPoints
+import com.orienteer.app.presentation.map.clearRouteOverlays
 import com.orienteer.app.presentation.map.detachLocationMarker
 import com.orienteer.app.ui.theme.MapOverlayColors
 import org.osmdroid.config.Configuration
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.TilesOverlay
+import org.osmdroid.util.GeoPoint as OsmGeoPoint
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -32,16 +42,18 @@ import java.util.Locale
 
 /**
  * Exports a printable PDF at a fixed orienteering print scale (or fit-to-page).
- * Captures the on-screen MapView after temporarily shrinking control badges
- * and hiding the GPS location marker.
+ * Basemap tiles are captured from the live MapView; the purple course, north
+ * arrow, and scale bar are drawn as vectors on the PDF (not screen overlays).
  */
 object RoutePdfExporter {
 
     private const val OOMAP_MAP_ID = "69c2676672a49"
-    /** Wait after camera settle so OSM tiles can download into the export MapView. */
-    private const val EXPORT_CAPTURE_DELAY_MS = 2800L
-    private const val EXPORT_FIT_PADDING_PX = 64
-    private const val CAPTURE_SCALE = 2
+    private const val EXPORT_FIT_PADDING_PX = 48
+    private const val TILE_POLL_INTERVAL_MS = 75L
+    private const val TILE_READY_TIMEOUT_MS = 10_000L
+    private const val EXPORT_MAX_MEGAPIXELS = 16
+    private const val EXPORT_PREFERRED_DPI = 200
+    private const val EXPORT_MIN_DPI = 150
 
     /**
      * Every fixed IOF scale that fits [route] on the PDF map frame (fine → coarse),
@@ -104,186 +116,398 @@ object RoutePdfExporter {
         val controlSheet = ControlDescriptionSheetBuilder.fromRoute(route)
         val layout = PdfPageLayout.computeForControlSheet(includePdfLegends, controlSheet.gridRowCount)
         val frameMm = PdfPageLayout.mapFrameMm(layout.mapRect)
-        val printMarkerScale = OrienteeringPrintScale.markerScaleForExport(exportScale)
         val basemapStyle = mapPrefs.basemapStyle
-        // Leg distances belong in the control sheet, not as pills on the PDF map lines.
-        val pdfMapPrefs = mapPrefs.copy(showAirLegDistanceLabels = false)
 
         Configuration.getInstance().userAgentValue = context.packageName
 
         val savedZoom = liveMap.zoomLevelDouble
-        val savedCenter = org.osmdroid.util.GeoPoint(
+        val savedCenter = OsmGeoPoint(
             liveMap.mapCenter.latitude,
             liveMap.mapCenter.longitude
         )
 
         liveMap.post {
-            // Smaller control badges for print; location marker removed again right before draw
-            // (Compose may re-add it while tiles load).
+            // Frame camera with overlays on so bbox math matches the live map, then strip
+            // them for a clean basemap capture (course is drawn as PDF vectors later).
             applyRouteMapOverlays(
                 map = liveMap,
                 route = route,
-                prefs = pdfMapPrefs,
+                prefs = mapPrefs.copy(
+                    showAirLegDistanceLabels = false,
+                    showWalkingPathPolyline = false,
+                    useIofCourseOverprint = true,
+                    showAirLegLines = true
+                ),
                 mapColors = mapColors,
                 primaryColorArgb = primaryColorArgb,
                 startColorArgb = startColorArgb,
                 basemapStyle = basemapStyle,
-                markerScale = printMarkerScale
+                markerScale = OrienteeringPrintScale.markerScaleForExport(exportScale)
             )
             liveMap.detachLocationMarker()
-            try {
-                applyExportCamera(liveMap, box, exportScale, frameMm)
-            } catch (_: Exception) {
-                // Keep export going with the current camera rather than crashing.
-            }
             liveMap.invalidate()
-            liveMap.postDelayed({ liveMap.invalidate() }, 400L)
-            liveMap.postDelayed({
-                try {
-                    // Ensure print-sized badges + no GPS pin at capture time.
-                    applyRouteMapOverlays(
-                        map = liveMap,
-                        route = route,
-                        prefs = pdfMapPrefs,
-                        mapColors = mapColors,
-                        primaryColorArgb = primaryColorArgb,
-                        startColorArgb = startColorArgb,
-                        basemapStyle = basemapStyle,
-                        markerScale = printMarkerScale
-                    )
-                    liveMap.detachLocationMarker()
-                    liveMap.invalidate()
-                    val w = liveMap.width.coerceAtLeast(100)
-                    val h = liveMap.height.coerceAtLeast(100)
-                    val bitmap = Bitmap.createBitmap(
-                        w * CAPTURE_SCALE,
-                        h * CAPTURE_SCALE,
-                        Bitmap.Config.ARGB_8888
-                    )
-                    val canvas = Canvas(bitmap)
-                    canvas.drawColor(Color.WHITE)
-                    canvas.save()
-                    canvas.scale(CAPTURE_SCALE.toFloat(), CAPTURE_SCALE.toFloat())
-                    liveMap.draw(canvas)
-                    val pdfAspect = (frameMm.widthMm / frameMm.heightMm).toFloat()
-                    val (viewportW, _) = PdfPageLayout.pdfViewportSizePx(w, h, pdfAspect)
-                    drawMapDecorations(
-                        canvas = canvas,
-                        map = liveMap,
-                        route = route,
-                        exportScale = exportScale,
-                        frameMm = frameMm,
-                        captureW = viewportW
-                    )
-                    canvas.restore()
 
-                    // Restore interactive preview overlays (Compose will refresh location marker).
-                    applyRouteMapOverlays(
-                        map = liveMap,
-                        route = route,
-                        prefs = mapPrefs,
-                        mapColors = mapColors,
-                        primaryColorArgb = primaryColorArgb,
-                        startColorArgb = startColorArgb,
-                        basemapStyle = basemapStyle,
-                        markerScale = 1f
-                    )
-                    liveMap.controller.setZoom(savedZoom)
-                    liveMap.controller.setCenter(savedCenter)
-                    liveMap.invalidate()
+            val mapRect = layout.mapRect
+            var exportMapView: MapView? = null
 
-                    val file = writePdf(
-                        context = context,
-                        bitmap = bitmap,
-                        route = route,
-                        layout = layout,
-                        controlSheet = if (includePdfLegends) controlSheet else null,
-                        exportScale = exportScale
-                    )
-                    bitmap.recycle()
-                    file?.let { openPdf(context, it) }
-                    onComplete(file)
+            fun runCapture(
+                captureMap: MapView,
+                restoreLiveCamera: Boolean,
+                rejectIfMostlyMissing: Boolean,
+                onAfterCapture: (rejectedMissingTiles: Boolean) -> Unit
+            ) {
+                val fitNiceRatio = try {
+                    applyExportCamera(captureMap, box, exportScale, frameMm)
                 } catch (_: Exception) {
-                    runCatching {
-                        applyRouteMapOverlays(
-                            map = liveMap,
-                            route = route,
-                            prefs = mapPrefs,
-                            mapColors = mapColors,
-                            primaryColorArgb = primaryColorArgb,
-                            startColorArgb = startColorArgb,
-                            basemapStyle = basemapStyle,
-                            markerScale = 1f
-                        )
-                        liveMap.controller.setZoom(savedZoom)
-                        liveMap.controller.setCenter(savedCenter)
-                        liveMap.invalidate()
-                    }
-                    onComplete(null)
+                    null
                 }
-            }, EXPORT_CAPTURE_DELAY_MS)
+                captureMap.invalidate()
+
+                waitForMapTiles(captureMap) {
+                    try {
+                        clearRouteOverlays(captureMap)
+                        captureMap.detachLocationMarker()
+                        captureMap.invalidate()
+
+                        if (rejectIfMostlyMissing && mostlyMissingTiles(captureMap)) {
+                            onAfterCapture(true)
+                            return@waitForMapTiles
+                        }
+
+                        val w = captureMap.width.coerceAtLeast(100)
+                        val h = captureMap.height.coerceAtLeast(100)
+                        val viewCrop = PdfPageLayout.centerCropSrcRect(w, h, mapRect)
+                        val centerLat = captureMap.mapCenter.latitude
+                        val mpp = metresPerPixelAtZoom(centerLat, captureMap.zoomLevelDouble)
+                        val printRatio = when (exportScale) {
+                            is PdfExportScale.Fixed -> exportScale.scale.ratio
+                            PdfExportScale.FitToPage -> fitNiceRatio
+                                ?: PdfVectorCourse.printRatioForExport(
+                                    exportScale = exportScale,
+                                    frameMm = frameMm,
+                                    metresPerPixel = mpp,
+                                    mapWidthPx = viewCrop.width().toInt().coerceAtLeast(1)
+                                )
+                        }
+                        val scratch = android.graphics.Point()
+                        fun projectView(geo: GeoPoint): Pair<Float, Float>? {
+                            captureMap.projection.toPixels(
+                                OsmGeoPoint(geo.latitude, geo.longitude),
+                                scratch
+                            )
+                            return scratch.x.toFloat() to scratch.y.toFloat()
+                        }
+                        fun projectPdf(geo: GeoPoint): Pair<Float, Float>? {
+                            val (vx, vy) = projectView(geo) ?: return null
+                            return PdfVectorCourse.viewPxToPdf(vx, vy, viewCrop, mapRect)
+                        }
+
+                        val bitmap = captureMapBitmap(captureMap)
+
+                        val file = writePdf(
+                            context = context,
+                            bitmap = bitmap,
+                            route = route,
+                            layout = layout,
+                            controlSheet = if (includePdfLegends) controlSheet else null,
+                            projectPdf = ::projectPdf,
+                            printRatio = printRatio,
+                            metresPerPdfPoint = mpp *
+                                (viewCrop.width() / mapRect.width().coerceAtLeast(1f))
+                        )
+                        bitmap.recycle()
+
+                        if (restoreLiveCamera) {
+                            applyRouteMapOverlays(
+                                map = liveMap,
+                                route = route,
+                                prefs = mapPrefs,
+                                mapColors = mapColors,
+                                primaryColorArgb = primaryColorArgb,
+                                startColorArgb = startColorArgb,
+                                basemapStyle = basemapStyle,
+                                markerScale = 1f
+                            )
+                            liveMap.controller.setZoom(savedZoom)
+                            liveMap.controller.setCenter(savedCenter)
+                            liveMap.invalidate()
+                        } else {
+                            applyRouteMapOverlays(
+                                map = liveMap,
+                                route = route,
+                                prefs = mapPrefs,
+                                mapColors = mapColors,
+                                primaryColorArgb = primaryColorArgb,
+                                startColorArgb = startColorArgb,
+                                basemapStyle = basemapStyle,
+                                markerScale = 1f
+                            )
+                            liveMap.invalidate()
+                        }
+
+                        file?.let { openPdf(context, it) }
+                        onComplete(file)
+                        onAfterCapture(false)
+                    } catch (_: Exception) {
+                        runCatching {
+                            applyRouteMapOverlays(
+                                map = liveMap,
+                                route = route,
+                                prefs = mapPrefs,
+                                mapColors = mapColors,
+                                primaryColorArgb = primaryColorArgb,
+                                startColorArgb = startColorArgb,
+                                basemapStyle = basemapStyle,
+                                markerScale = 1f
+                            )
+                            if (restoreLiveCamera) {
+                                liveMap.controller.setZoom(savedZoom)
+                                liveMap.controller.setCenter(savedCenter)
+                            }
+                            liveMap.invalidate()
+                        }
+                        onComplete(null)
+                        onAfterCapture(false)
+                    }
+                }
+            }
+
+            fun detachExportMap() {
+                val export = exportMapView ?: return
+                runCatching {
+                    export.onPause()
+                    export.onDetach()
+                    (export.parent as? ViewGroup)?.removeView(export)
+                }
+                exportMapView = null
+            }
+
+            val hiRes = tryCreateHiResExportMap(
+                context = context,
+                anchorView = mapView,
+                mapRect = mapRect,
+                basemapStyle = basemapStyle
+            )
+            exportMapView = hiRes
+
+            if (hiRes != null) {
+                runCapture(
+                    captureMap = hiRes,
+                    restoreLiveCamera = false,
+                    rejectIfMostlyMissing = true
+                ) { rejected ->
+                    detachExportMap()
+                    if (rejected) {
+                        liveMap.post {
+                            clearRouteOverlays(liveMap)
+                            liveMap.detachLocationMarker()
+                            runCapture(
+                                captureMap = liveMap,
+                                restoreLiveCamera = true,
+                                rejectIfMostlyMissing = false
+                            ) { _ -> }
+                        }
+                    }
+                }
+            } else {
+                clearRouteOverlays(liveMap)
+                liveMap.detachLocationMarker()
+                runCapture(
+                    captureMap = liveMap,
+                    restoreLiveCamera = true,
+                    rejectIfMostlyMissing = false
+                ) { _ -> }
+            }
         }
     }
 
+    private fun exportDpiForMapRect(mapRect: PdfRect): Int {
+        for (dpi in EXPORT_PREFERRED_DPI downTo EXPORT_MIN_DPI step 25) {
+            val w = (mapRect.width() * dpi / 72f).toInt().coerceAtLeast(1)
+            val h = (mapRect.height() * dpi / 72f).toInt().coerceAtLeast(1)
+            if (w.toLong() * h <= EXPORT_MAX_MEGAPIXELS * 1_000_000L) return dpi
+        }
+        return EXPORT_MIN_DPI
+    }
+
+    private fun tryCreateHiResExportMap(
+        context: Context,
+        anchorView: View,
+        mapRect: PdfRect,
+        basemapStyle: BasemapStyle
+    ): MapView? {
+        val root = anchorView.rootView.findViewById<ViewGroup>(android.R.id.content) ?: return null
+        val dpi = exportDpiForMapRect(mapRect)
+        val widthPx = (mapRect.width() * dpi / 72f).toInt().coerceAtLeast(100)
+        val heightPx = (mapRect.height() * dpi / 72f).toInt().coerceAtLeast(100)
+        return try {
+            MapView(context).apply {
+                alpha = 0f
+                isClickable = false
+                isFocusable = false
+                translationX = -widthPx.toFloat() * 2f
+                layoutParams = FrameLayout.LayoutParams(widthPx, heightPx)
+                applyBasemapStyle(this, context, basemapStyle)
+                root.addView(this)
+                measure(
+                    View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(heightPx, View.MeasureSpec.EXACTLY)
+                )
+                layout(0, 0, widthPx, heightPx)
+                onResume()
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun captureMapBitmap(map: MapView): Bitmap {
+        val w = map.width.coerceAtLeast(1)
+        val h = map.height.coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+        map.draw(canvas)
+        return bitmap
+    }
+
+    private fun tileOverlaysForReadyCheck(map: MapView): List<TilesOverlay> {
+        val base = map.overlayManager.tilesOverlay
+        val extra = map.overlays.filterIsInstance<TilesOverlay>().filter { it !== base }
+        return listOfNotNull(base) + extra
+    }
+
+    private fun mapTilesReady(map: MapView): Boolean =
+        tileOverlaysForReadyCheck(map).all { overlay ->
+            val states = overlay.tileStates
+            states.isDone &&
+                states.notFound == 0 &&
+                states.upToDate + states.expired + states.scaled == states.total
+        }
+
+    private fun mostlyMissingTiles(map: MapView): Boolean {
+        var total = 0
+        var notFound = 0
+        for (overlay in tileOverlaysForReadyCheck(map)) {
+            val states = overlay.tileStates
+            total += states.total
+            notFound += states.notFound
+        }
+        return total > 0 && notFound * 2 > total
+    }
+
+    private fun waitForMapTiles(map: MapView, onReady: () -> Unit) {
+        val deadline = SystemClock.uptimeMillis() + TILE_READY_TIMEOUT_MS
+        fun tick() {
+            map.invalidate()
+            if (mapTilesReady(map) || SystemClock.uptimeMillis() >= deadline) {
+                onReady()
+                return
+            }
+            map.postDelayed(::tick, TILE_POLL_INTERVAL_MS)
+        }
+        map.post(::tick)
+    }
+
     /**
-     * Frame the live map for the region that will remain after PDF center-crop
-     * (phone aspect ≠ page map band). Otherwise Fit-to-page / 1:N looks fine on
-     * the tall screen and then the top/bottom of the course are chopped off.
+     * Frame the map for the PDF center-crop viewport.
+     * @return Snapped 1:N for [PdfExportScale.FitToPage] (for PDF scale bar), or null for fixed scales.
      */
     private fun applyExportCamera(
         map: MapView,
         box: BoundingBox,
         exportScale: PdfExportScale,
         frameMm: MapFrameMm
-    ) {
+    ): Int? {
         val pdfAspect = (frameMm.widthMm / frameMm.heightMm.coerceAtLeast(0.01)).toFloat()
         val (viewportW, viewportH) = PdfPageLayout.pdfViewportSizePx(
             map.width,
             map.height,
             pdfAspect
         )
-        val centerLat = (box.latNorth + box.latSouth) / 2.0
-        val centerLon = (box.lonEast + box.lonWest) / 2.0
-        val tileMin = map.tileProvider.minimumZoomLevel.toDouble()
         val tileMax = map.tileProvider.maximumZoomLevel.toDouble()
-        when (exportScale) {
+        return when (exportScale) {
             is PdfExportScale.Fixed -> {
-                val groundWidthM = exportScale.scale.groundWidthM(frameMm)
-                val mpp = groundWidthM / viewportW.coerceAtLeast(1)
-                val zoom = zoomForMetresPerPixel(centerLat, mpp).coerceIn(tileMin, tileMax)
-                // Temporarily allow zoom-out if preview had raised minZoom.
-                val prevMin = map.minZoomLevel
-                if (zoom < prevMin) {
-                    map.setMinZoomLevel(zoom.coerceAtLeast(tileMin))
-                }
-                map.controller.setZoom(zoom)
-                map.controller.setCenter(
-                    org.osmdroid.util.GeoPoint(centerLat, centerLon)
+                applyFixedPrintRatio(
+                    map = map,
+                    box = box,
+                    ratio = exportScale.scale.ratio,
+                    frameMm = frameMm,
+                    viewportW = viewportW,
+                    viewportH = viewportH,
+                    tileMax = tileMax
                 )
-                // If 1:N still clips the bbox in the PDF viewport, fall back to fit.
-                if (!bboxFitsViewport(map, box, viewportW, viewportH)) {
-                    zoomToPdfViewport(map, box, viewportW, viewportH, tileMax)
-                }
+                null
             }
             PdfExportScale.FitToPage -> {
+                val tileMin = map.tileProvider.minimumZoomLevel.toDouble()
                 val prevMin = map.minZoomLevel
                 map.setMinZoomLevel(tileMin)
                 zoomToPdfViewport(map, box, viewportW, viewportH, tileMax)
-                // Keep minZoom lowered through capture; restore happens with overlays.
                 if (map.zoomLevelDouble < prevMin) {
                     map.setMinZoomLevel(map.zoomLevelDouble.coerceAtLeast(tileMin))
                 }
+                val centerLat = (box.latNorth + box.latSouth) / 2.0
+                val raw = PdfMapScaleBar.approximateRatio(
+                    metresPerPixelAtZoom(centerLat, map.zoomLevelDouble),
+                    viewportW,
+                    frameMm.widthMm
+                )
+                val nice = nicePrintRatio(raw)
+                applyFixedPrintRatio(
+                    map = map,
+                    box = box,
+                    ratio = nice,
+                    frameMm = frameMm,
+                    viewportW = viewportW,
+                    viewportH = viewportH,
+                    tileMax = tileMax
+                )
+                // If fixed-ratio framing fell back to a tight fit, label from the actual zoom.
+                nicePrintRatio(
+                    PdfMapScaleBar.approximateRatio(
+                        metresPerPixelAtZoom(centerLat, map.zoomLevelDouble),
+                        viewportW,
+                        frameMm.widthMm
+                    )
+                )
             }
+        }
+    }
+
+    private fun applyFixedPrintRatio(
+        map: MapView,
+        box: BoundingBox,
+        ratio: Int,
+        frameMm: MapFrameMm,
+        viewportW: Int,
+        viewportH: Int,
+        tileMax: Double
+    ) {
+        val centerLat = (box.latNorth + box.latSouth) / 2.0
+        val centerLon = (box.lonEast + box.lonWest) / 2.0
+        val tileMin = map.tileProvider.minimumZoomLevel.toDouble()
+        val groundWidthM = (frameMm.widthMm / 1000.0) * ratio
+        val mpp = groundWidthM / viewportW.coerceAtLeast(1)
+        val zoom = zoomForMetresPerPixel(centerLat, mpp).coerceIn(tileMin, tileMax)
+        val prevMin = map.minZoomLevel
+        if (zoom < prevMin) {
+            map.setMinZoomLevel(zoom.coerceAtLeast(tileMin))
+        }
+        map.controller.setZoom(zoom)
+        map.controller.setCenter(org.osmdroid.util.GeoPoint(centerLat, centerLon))
+        if (!bboxFitsViewport(map, box, viewportW, viewportH)) {
+            zoomToPdfViewport(map, box, viewportW, viewportH, tileMax)
         }
     }
 
     /**
      * Fit [box] inside the PDF center-crop ([vw]×[vh]).
      *
-     * osmdroid only exposes a single borderSize against the full MapView. Prefer
-     * chrome+inner pad, but [PdfPageLayout.safeZoomBorderPx] must keep
-     * (width − 2·pad) positive — oversized pad ANRs in Projection.getCloserPixel
-     * (ORIENTEERRUN-J).
+     * Computes zoom from the crop viewport size directly. Our osmdroid build has
+     * no width/height [MapView.zoomToBoundingBox] overload; stuffing phone-crop
+     * chrome into borderSize against the full MapView either ANRs (ORIENTEERRUN-J)
+     * or, after safe clamp, leaves ~2 usable pixels and zooms out to country scale.
      */
     private fun zoomToPdfViewport(
         map: MapView,
@@ -294,30 +518,39 @@ object RoutePdfExporter {
     ) {
         val safeW = vw.coerceAtLeast(1)
         val safeH = vh.coerceAtLeast(1)
-        val mapW = map.width.coerceAtLeast(1)
-        val mapH = map.height.coerceAtLeast(1)
-        val cropChrome = maxOf((mapW - safeW) / 2, (mapH - safeH) / 2).coerceAtLeast(0)
-        val pad = PdfPageLayout.safeZoomBorderPx(
-            mapW,
-            mapH,
-            cropChrome + EXPORT_FIT_PADDING_PX
-        )
-        try {
-            map.zoomToBoundingBox(box, /* animated = */ false, pad, maxZoom, /* animationSpeed = */ null)
-        } catch (_: Exception) {
-            // Manual fallback if osmdroid rejects the box (degenerate span, etc.).
-            val centerLat = (box.latNorth + box.latSouth) / 2.0
-            val centerLon = (box.lonEast + box.lonWest) / 2.0
-            val spanLatM = ((box.latNorth - box.latSouth) * 111_320.0).coerceAtLeast(50.0)
-            val cosLat = kotlin.math.cos(Math.toRadians(centerLat)).coerceAtLeast(1e-6)
-            val spanLonM = ((box.lonEast - box.lonWest) * 111_320.0 * cosLat).coerceAtLeast(50.0)
-            val usableW = (safeW - 2 * EXPORT_FIT_PADDING_PX).coerceAtLeast(1)
-            val usableH = (safeH - 2 * EXPORT_FIT_PADDING_PX).coerceAtLeast(1)
-            val mpp = maxOf(spanLonM / usableW, spanLatM / usableH)
-            val zoom = zoomForMetresPerPixel(centerLat, mpp).coerceAtMost(maxZoom)
-            map.controller.setZoom(zoom)
-            map.controller.setCenter(org.osmdroid.util.GeoPoint(centerLat, centerLon))
-        }
+        val pad = PdfPageLayout.safeZoomBorderPx(safeW, safeH, EXPORT_FIT_PADDING_PX)
+        fitExportCameraManually(map, box, safeW, safeH, pad, maxZoom)
+    }
+
+    private fun expectedFitZoom(
+        box: BoundingBox,
+        viewportW: Int,
+        viewportH: Int,
+        padPx: Int
+    ): Double {
+        val centerLat = (box.latNorth + box.latSouth) / 2.0
+        val spanLatM = ((box.latNorth - box.latSouth) * 111_320.0).coerceAtLeast(50.0)
+        val cosLat = kotlin.math.cos(Math.toRadians(centerLat)).coerceAtLeast(1e-6)
+        val spanLonM = ((box.lonEast - box.lonWest) * 111_320.0 * cosLat).coerceAtLeast(50.0)
+        val usableW = (viewportW - 2 * padPx).coerceAtLeast(1)
+        val usableH = (viewportH - 2 * padPx).coerceAtLeast(1)
+        val mpp = maxOf(spanLonM / usableW, spanLatM / usableH)
+        return zoomForMetresPerPixel(centerLat, mpp)
+    }
+
+    private fun fitExportCameraManually(
+        map: MapView,
+        box: BoundingBox,
+        viewportW: Int,
+        viewportH: Int,
+        padPx: Int,
+        maxZoom: Double
+    ) {
+        val centerLat = (box.latNorth + box.latSouth) / 2.0
+        val centerLon = (box.lonEast + box.lonWest) / 2.0
+        val zoom = expectedFitZoom(box, viewportW, viewportH, padPx).coerceAtMost(maxZoom)
+        map.controller.setZoom(zoom)
+        map.controller.setCenter(org.osmdroid.util.GeoPoint(centerLat, centerLon))
     }
 
     /** True when [box] lies inside the center [vw]×[vh] region of the map view. */
@@ -351,209 +584,11 @@ object RoutePdfExporter {
         return true
     }
 
-    /** Scale bar + north arrow overprinted on the captured map (view-pixel coords). */
-    private fun drawMapDecorations(
-        canvas: Canvas,
-        map: MapView,
-        route: Route,
-        exportScale: PdfExportScale,
-        frameMm: MapFrameMm,
-        captureW: Int
-    ) {
-        val mpp = when (exportScale) {
-            is PdfExportScale.Fixed ->
-                exportScale.scale.groundWidthM(frameMm) / captureW.coerceAtLeast(1)
-            PdfExportScale.FitToPage -> {
-                val centerLat = map.mapCenter.latitude
-                metresPerPixelAtZoom(centerLat, map.zoomLevelDouble)
-            }
-        }
-        val ratioLabel = when (exportScale) {
-            is PdfExportScale.Fixed ->
-                PdfMapScaleBar.formatRatioLabel(exportScale.scale.ratio)
-            PdfExportScale.FitToPage ->
-                PdfMapScaleBar.formatRatioLabel(
-                    PdfMapScaleBar.approximateRatio(mpp, captureW, frameMm.widthMm)
-                )
-        }
-        val bar = PdfMapScaleBar.compute(
-            metresPerPixel = mpp,
-            maxBarWidthPx = (captureW * 0.32).toInt().coerceAtLeast(48),
-            ratioLabel = ratioLabel
+    private fun routePoints(route: Route): List<GeoPoint> =
+        pointsForPdfExportBounds(
+            checkpoints = route.checkpoints.map { it.position },
+            polyline = route.polylinePoints
         )
-        // Orienteering-style block: ratio on top, segmented bar, distance under.
-        val pad = 10f
-        val ratioTextSize = 13f
-        val distTextSize = 10f
-        val barThickness = 8f
-        val blockW = bar.widthPx + pad * 2
-        val blockH = pad + ratioTextSize + 4f + barThickness + 4f + distTextSize + pad
-        val controls = route.checkpoints.mapNotNull { cp ->
-            val pt = android.graphics.Point()
-            map.projection.toPixels(
-                org.osmdroid.util.GeoPoint(cp.position.latitude, cp.position.longitude),
-                pt
-            )
-            pt.x.toFloat() to pt.y.toFloat()
-        }
-        val mapW = canvas.width.toFloat() / CAPTURE_SCALE
-        val mapH = canvas.height.toFloat() / CAPTURE_SCALE
-        // Canvas is scaled by CAPTURE_SCALE when this runs — use view-pixel sizes.
-        val scaleCorner = PdfMapScaleBar.pickCorner(
-            mapWidth = mapW,
-            mapHeight = mapH,
-            barWidth = blockW,
-            barHeight = blockH,
-            controlPointsPx = controls,
-            paddingPx = 12f
-        )
-        val rect = PdfMapScaleBar.rectForCorner(
-            scaleCorner,
-            mapW,
-            mapH,
-            blockW,
-            blockH,
-            paddingPx = 12f
-        )
-        val ink = Color.parseColor("#0F1A13")
-        val bg = Paint().apply {
-            isAntiAlias = true
-            color = Color.argb(220, 255, 255, 255)
-            style = Paint.Style.FILL
-        }
-        val border = Paint().apply {
-            isAntiAlias = true
-            color = ink
-            style = Paint.Style.STROKE
-            strokeWidth = 1.5f
-        }
-        val box = android.graphics.RectF(rect.left, rect.top, rect.right, rect.bottom)
-        canvas.drawRoundRect(box, 4f, 4f, bg)
-        canvas.drawRoundRect(box, 4f, 4f, border)
-
-        val ratioPaint = Paint().apply {
-            isAntiAlias = true
-            color = ink
-            textSize = ratioTextSize
-            textAlign = Paint.Align.CENTER
-            isFakeBoldText = true
-        }
-        canvas.drawText(
-            bar.ratioLabel,
-            rect.centerX(),
-            rect.top + pad + ratioTextSize,
-            ratioPaint
-        )
-
-        val barLeft = rect.left + pad
-        val barRight = barLeft + bar.widthPx
-        val barTop = rect.top + pad + ratioTextSize + 4f
-        val barBottom = barTop + barThickness
-        val fillBlack = Paint().apply {
-            isAntiAlias = true
-            color = Color.BLACK
-            style = Paint.Style.FILL
-        }
-        val fillWhite = Paint().apply {
-            isAntiAlias = true
-            color = Color.WHITE
-            style = Paint.Style.FILL
-        }
-        val segW = (barRight - barLeft) / bar.segmentCount
-        for (i in 0 until bar.segmentCount) {
-            val l = barLeft + i * segW
-            val r = if (i == bar.segmentCount - 1) barRight else l + segW
-            canvas.drawRect(l, barTop, r, barBottom, if (i % 2 == 0) fillBlack else fillWhite)
-        }
-        canvas.drawRect(barLeft, barTop, barRight, barBottom, border)
-
-        val distPaint = Paint().apply {
-            isAntiAlias = true
-            color = Color.parseColor("#131E17")
-            textSize = distTextSize
-            textAlign = Paint.Align.LEFT
-        }
-        canvas.drawText("0", barLeft, barBottom + 4f + distTextSize, distPaint)
-        distPaint.textAlign = Paint.Align.RIGHT
-        canvas.drawText(bar.distanceLabel, barRight, barBottom + 4f + distTextSize, distPaint)
-
-        drawNorthArrowOnMap(
-            canvas = canvas,
-            mapW = mapW,
-            mapH = mapH,
-            controlPointsPx = controls,
-            avoidCorner = scaleCorner,
-            bg = bg,
-            border = border,
-            inkArgb = ink
-        )
-    }
-
-    /** OSM is north-up — arrow always points to the top of the PDF map. */
-    private fun drawNorthArrowOnMap(
-        canvas: Canvas,
-        mapW: Float,
-        mapH: Float,
-        controlPointsPx: List<Pair<Float, Float>>,
-        avoidCorner: PdfMapScaleBar.Corner,
-        bg: Paint,
-        border: Paint,
-        inkArgb: Int
-    ) {
-        val (nw, nh) = PdfNorthArrow.blockSizePx(minOf(mapW, mapH))
-        val corner = PdfNorthArrow.pickCorner(
-            mapWidth = mapW,
-            mapHeight = mapH,
-            width = nw,
-            height = nh,
-            controlPointsPx = controlPointsPx,
-            avoid = avoidCorner,
-            paddingPx = 12f
-        )
-        val rect = PdfMapScaleBar.rectForCorner(corner, mapW, mapH, nw, nh, paddingPx = 12f)
-        val box = android.graphics.RectF(rect.left, rect.top, rect.right, rect.bottom)
-        canvas.drawRoundRect(box, 4f, 4f, bg)
-        canvas.drawRoundRect(box, 4f, 4f, border)
-
-        val cx = rect.centerX()
-        val innerPad = nw * 0.14f
-        val tipY = rect.top + innerPad
-        val baseY = tipY + nh * 0.42f
-        val halfW = nw * 0.28f
-        val shaftTop = baseY - 1f
-        val shaftBottom = rect.bottom - innerPad - nh * 0.22f
-        val shaftHalf = nw * 0.06f
-
-        val fill = Paint().apply {
-            isAntiAlias = true
-            color = inkArgb
-            style = Paint.Style.FILL
-        }
-        val head = android.graphics.Path().apply {
-            moveTo(cx, tipY)
-            lineTo(cx + halfW, baseY)
-            lineTo(cx - halfW, baseY)
-            close()
-        }
-        canvas.drawPath(head, fill)
-        canvas.drawRect(cx - shaftHalf, shaftTop, cx + shaftHalf, shaftBottom, fill)
-
-        val nPaint = Paint().apply {
-            isAntiAlias = true
-            color = inkArgb
-            textSize = nh * 0.22f
-            textAlign = Paint.Align.CENTER
-            isFakeBoldText = true
-        }
-        canvas.drawText("N", cx, rect.bottom - innerPad * 0.35f, nPaint)
-    }
-
-    private fun routePoints(route: Route): List<GeoPoint> {
-        val points = ArrayList<GeoPoint>(route.checkpoints.size + route.polylinePoints.size)
-        route.checkpoints.forEach { points.add(it.position) }
-        points.addAll(route.polylinePoints)
-        return points
-    }
 
     private fun boundingBoxFromRoute(route: Route): BoundingBox? =
         boundingBoxForPoints(routePoints(route))
@@ -564,7 +599,9 @@ object RoutePdfExporter {
         route: Route,
         layout: PdfPageRegions,
         controlSheet: ControlDescriptionSheet?,
-        exportScale: PdfExportScale
+        projectPdf: (GeoPoint) -> Pair<Float, Float>?,
+        printRatio: Int,
+        metresPerPdfPoint: Double
     ): File? {
         val docsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
             ?: context.filesDir
@@ -596,18 +633,26 @@ object RoutePdfExporter {
                 null
             )
 
-            // Alpine Trail: forest brand title, pine-charcoal body (DESIGN.md).
-            val titlePaint = Paint().apply {
-                isAntiAlias = true
-                textSize = 14f
-                isFakeBoldText = true
-                textAlign = Paint.Align.LEFT
-                color = Color.parseColor("#1B5E20")
-            }
-            val title =
-                "OrienteerRun — ${GeoUtils.formatDistance(route.totalDistanceM)} • " +
-                    "${route.waypointCount} CP • ${(route.estimatedDurationS / 60).toInt()} min • ${exportScale.label}"
-            pageCanvas.drawText(title, PdfPageLayout.MARGIN, layout.titleBaseline, titlePaint)
+            // Vector purple course (mm on paper) — not thick screen polylines.
+            // No distance/title header — real O-map PDFs are map-first.
+            val plan = IofCourseGeometry.build(
+                route.checkpoints,
+                controlDiameterM = IOF_CONTROL_DIAMETER_M
+            )
+            val circleMm = PdfVectorCourse.controlCircleDiameterMm(printRatio)
+            PdfVectorCourse.draw(
+                canvas = pageCanvas,
+                plan = plan,
+                project = projectPdf,
+                circleDiameterMm = circleMm
+            )
+            PdfVectorCourse.drawNorthArrow(pageCanvas, mapRect)
+            drawPdfScaleBar(
+                canvas = pageCanvas,
+                mapRect = mapRect,
+                metresPerPdfPoint = metresPerPdfPoint,
+                printRatio = printRatio
+            )
 
             if (controlSheet != null) {
                 layout.legendRect?.let { legendRect ->
@@ -622,6 +667,73 @@ object RoutePdfExporter {
         } catch (_: Exception) {
             null
         }
+    }
+
+    /** Compact scale bar in PDF points (bottom-left of the map band). */
+    private fun drawPdfScaleBar(
+        canvas: Canvas,
+        mapRect: PdfRect,
+        metresPerPdfPoint: Double,
+        printRatio: Int
+    ) {
+        val mpp = metresPerPdfPoint.coerceAtLeast(1e-6)
+        val maxBarPt = (mapRect.width() * 0.28f).coerceAtLeast(40f)
+        val bar = PdfMapScaleBar.compute(
+            metresPerPixel = mpp,
+            maxBarWidthPx = maxBarPt.toInt(),
+            ratioLabel = PdfMapScaleBar.formatRatioLabel(printRatio)
+        )
+        val pad = 6f
+        val left = mapRect.left + pad
+        val bottom = mapRect.bottom - pad
+        val barTop = bottom - 10f
+        val barBottom = bottom - 4f
+        val right = left + bar.widthPx
+
+        val bg = Paint().apply {
+            isAntiAlias = true
+            color = Color.argb(210, 255, 255, 255)
+            style = Paint.Style.FILL
+        }
+        val ink = Paint().apply {
+            isAntiAlias = true
+            color = Color.parseColor("#0F1A13")
+            style = Paint.Style.STROKE
+            strokeWidth = 1f
+        }
+        val text = Paint().apply {
+            isAntiAlias = true
+            color = Color.parseColor("#0F1A13")
+            textSize = 8f
+            isFakeBoldText = true
+        }
+        val block = android.graphics.RectF(left - 4f, barTop - 12f, right + 4f, bottom + 2f)
+        canvas.drawRoundRect(block, 3f, 3f, bg)
+        canvas.drawRoundRect(block, 3f, 3f, ink)
+        canvas.drawText(bar.ratioLabel, left, barTop - 3f, text)
+
+        val fillBlack = Paint().apply {
+            isAntiAlias = true
+            color = Color.BLACK
+            style = Paint.Style.FILL
+        }
+        val fillWhite = Paint().apply {
+            isAntiAlias = true
+            color = Color.WHITE
+            style = Paint.Style.FILL
+        }
+        val segW = (right - left) / bar.segmentCount
+        for (i in 0 until bar.segmentCount) {
+            val l = left + i * segW
+            val r = if (i == bar.segmentCount - 1) right else l + segW
+            canvas.drawRect(l, barTop, r, barBottom, if (i % 2 == 0) fillBlack else fillWhite)
+        }
+        canvas.drawRect(left, barTop, right, barBottom, ink)
+        text.textSize = 7f
+        text.isFakeBoldText = false
+        canvas.drawText("0", left, bottom + 1f, text)
+        text.textAlign = Paint.Align.RIGHT
+        canvas.drawText(bar.distanceLabel, right, bottom + 1f, text)
     }
 
     /**
@@ -1036,7 +1148,7 @@ object RoutePdfExporter {
                     isTrailingFinish && route.isOneWayCourse -> "Finish"
                     cp.isStart && route.isOneWayCourse -> "Start"
                     cp.isStart -> "Start / Finish"
-                    else -> "CP ${cp.id}"
+                    else -> "${cp.id}"
                 }
             )
             val desc = escapeXml(cp.description)
@@ -1085,7 +1197,7 @@ object RoutePdfExporter {
                     isTrailingFinish && route.isOneWayCourse -> "Finish"
                     cp.isStart && route.isOneWayCourse -> "Start"
                     cp.isStart -> "Start / Finish"
-                    else -> "CP ${cp.id}"
+                    else -> "${cp.id}"
                 }
             )
             sb.appendLine("  <wpt lat=\"$lat\" lon=\"$lon\">")

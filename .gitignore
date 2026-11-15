@@ -15,6 +15,8 @@ local.properties
 sentry.properties
 *.jks
 *.keystore
+upload_certificate.pem
+*.pem
 app/release/
 app/build/
 hs_err_pid*.log

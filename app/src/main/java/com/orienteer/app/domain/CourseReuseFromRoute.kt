@@ -6,7 +6,6 @@ import com.orienteer.app.data.local.RouteGenerationPreferences
 
 /**
  * Payload to reuse a past [Route] for a new generate (History → New from this run).
- * Intermediate controls become locked pins (all non-start / non-trailing-finish).
  */
 data class CourseReusePayload(
     val start: GeoPoint,
@@ -22,9 +21,14 @@ data class CourseReusePayload(
 object CourseReuseFromRoute {
 
     /**
-     * Rebuild reuse payload from any saved route.
-     * Locked pins = every intermediate (not only [com.orienteer.app.data.model.Checkpoint.isFixed]).
-     * Snapshot prefs win when present; otherwise [anyOrderDefault] / explicit overrides.
+     * Rebuild reuse payload from a saved route.
+     *
+     * Locked pins preference order:
+     * 1. [CourseReuseSnapshot.lockedPins] (exact pins the user set before Generate)
+     * 2. Checkpoints with [com.orienteer.app.data.model.Checkpoint.isFixed]
+     * 3. Empty — never promote every intermediate control to a locked pin
+     *
+     * Start/finish prefer the snapshot when present so one-way vs loop matches Generate.
      */
     fun fromRoute(
         route: Route,
@@ -34,15 +38,25 @@ object CourseReuseFromRoute {
         generationPrefs: RouteGenerationPreferences? = null
     ): CourseReusePayload? {
         if (route.checkpoints.isEmpty()) return null
-        val start = route.checkpoints.first().position
+        val snap = route.reuseSnapshot
+
+        val start = snap?.start ?: route.checkpoints.first().position
         val finish = when {
+            snap != null -> if (snap.hasExplicitFinish) snap.finish else null
             route.isOneWayCourse -> route.checkpoints.last().position
             else -> null
         }
-        val locked = route.checkpoints
-            .filter { !it.isStart }
-            .map { it.position }
-        val snap = route.reuseSnapshot
+
+        val locked = when {
+            snap != null -> snap.lockedPins
+            else -> {
+                val fixed = route.checkpoints
+                    .filter { !it.isStart && it.isFixed }
+                    .map { it.position }
+                fixed
+            }
+        }
+
         val anyOrder = when {
             locked.size < 2 -> false
             snap != null -> snap.anyOrder
