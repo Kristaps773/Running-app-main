@@ -1,0 +1,51 @@
+OrienteerRun — upload vc36 + new screenshots (2026-11-15)
+=========================================================
+
+WHY kristapsduda773@gmail.com SEES NO UPDATE
+--------------------------------------------
+Closed testing (Alpha) is still serving release **4 (1.2.2)** from 23 Oct.
+Internal testing is on **35 (1.3.30)** only.
+Local file **OrienteerRun-1.3.31-vc36.aab** exists but is NOT on Play yet.
+Closed testers will never see 36 until you finish/publish a Closed release with that AAB.
+
+A. Upload 1.3.31 (vc36) to CLOSED testing (do this first)
+---------------------------------------------------------
+File:
+  Desktop\PlayStore-OrienteerRun-Assets\OrienteerRun-1.3.31-vc36.aab
+  (also store-assets\releases\)
+
+1. Play Console → Test and release → Closed testing → Closed testing - Alpha
+   https://play.google.com/console/u/0/developers/8746134727230130760/app/4972185293940009796/tracks/4698909467647001938
+2. Open the existing **Untitled release (Draft)** → Edit release
+   (Create new release is disabled while a draft exists)
+3. Upload the vc36 AAB (replace any older draft bundle)
+4. Release name: 36 (1.3.31)
+5. Review → Start rollout to Closed testing
+6. Testers tab: ensure Google Group orienteerrun-testers@googlegroups.com is attached
+7. On phone as kristapsduda773@: open testing opt-in page, then Play → update
+   (can take minutes to a few hours)
+
+Optional: also Create new release on Internal with the same AAB so internal email list gets 36.
+
+B. Update Play Store screenshots (listing graphics)
+---------------------------------------------------
+Browser cannot auto-attach files. Pick manually from:
+  Desktop\PlayStore-OrienteerRun-Assets\
+
+Upload phone-01.jpg … phone-07.jpg (or at least 01–04):
+  phone-01 setup
+  phone-02 map
+  phone-03 active run
+  phone-04 history
+  phone-05 favorites
+  phone-06 settings
+  phone-07 settings map
+
+1. Grow users → Store presence → Main store listing
+2. Phone screenshots → replace old ones with the new JPGs above
+3. Save → Send for review / Publishing overview if prompted
+
+C. Quick check after publish
+----------------------------
+Closed track latest release should show **36 (1.3.31) Available to selected testers**
+NOT only 4 (1.2.2).

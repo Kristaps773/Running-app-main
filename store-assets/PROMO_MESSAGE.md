@@ -12,9 +12,10 @@ Folder: `store-assets/screenshots/` (also Desktop `PlayStore-OrienteerRun-Assets
 4. `04-history.png` recent fake runs (Berlin / Hyde Park / Riga)  
 5. `05-favorites.png` saved courses  
 6. `06-settings.png` appearance + route + map toggles  
+7. `08-map-pdf.png` route preview dashboard with **Export PDF** (sheet open)  
 
-Prefer **01 + 02 + 03** for social posts. Use **01–06** (or at least 01–04) on the Play listing.  
-JPGs for Console: `store-assets/_play_upload/phone-01.jpg` … `phone-06.jpg`.
+Prefer **01 + 02 + 03** for social posts. Use **01–06** (or at least 01–04) on the Play listing; add **08** to show PDF export.  
+JPGs for Console: `store-assets/_play_upload/phone-01.jpg` … `phone-08.jpg`.
 
 Capture (emulator): `store-assets/capture-screenshots.ps1`
 

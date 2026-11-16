@@ -84,7 +84,8 @@ fun AppNavigation(
 
     LaunchedEffect(startAtHistory, screenshotScene) {
         when {
-            screenshotScene.equals("map", ignoreCase = true) -> {
+            screenshotScene.equals("map", ignoreCase = true) ||
+                screenshotScene.equals("map_pdf", ignoreCase = true) -> {
                 navController.navigate(Screen.Map.createRoute(demoRouteId)) {
                     launchSingleTop = true
                 }

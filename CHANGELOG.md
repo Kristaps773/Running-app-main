@@ -4,7 +4,11 @@ Play release history reconstructed from Cursor chats and AAB build dates.
 **Do not keep a stack of old `.aab` files as history** — use this file + git commits.
 Local Play upload copies live only under `store-assets/releases/` (gitignored); keep the latest AAB.
 
-Current app version in source: **1.3.30** (`versionCode` 35).
+Current app version in source: **1.3.31** (`versionCode` 36).
+
+## 1.3.31 (vc36) — 2026-11-15
+
+Play upload bump — `versionCode` 35 was already used on Console. Build script ignores emulators so “no phone” correctly builds the signed AAB.
 
 ## 1.3.30 (vc35) — 2026-11-08
 

@@ -88,7 +88,7 @@
     <string name="settings_show_air_labels_sub">Show distance text at the midpoint of each straight-line leg.</string>
     <string name="settings_show_walking_path">Foot path on map</string>
     <string name="settings_show_walking_path_brief">Routed walking line on the map</string>
-    <string name="settings_show_walking_path_sub">Show the routed walking line between checkpoints. Turn off for a harder course where only straight legs and controls are shown. On by default while testing.</string>
+    <string name="settings_show_walking_path_sub">Show the routed walking line between checkpoints. Off by default so the course does not reveal a suggested path. Turn on for navigation-style guidance.</string>
     <string name="settings_show_you_are_here">You-are-here during run</string>
     <string name="settings_show_you_are_here_brief">GPS puck while a run is active</string>
     <string name="settings_show_you_are_here_sub">Show your GPS position on the map while a run is active. Off by default for a cleaner course view.</string>

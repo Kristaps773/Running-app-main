@@ -1,6 +1,6 @@
 ﻿# OrienteerRun — one-click build
-# Phone connected (adb "device") → debug build + install
-# No phone → signed release AAB → store-assets\releases\OrienteerRun-<ver>-vc<code>.aab
+# Physical phone connected (adb "device", not emulator) → debug build + install
+# No physical phone → signed release AAB → store-assets\releases\OrienteerRun-<ver>-vc<code>.aab
 
 $ErrorActionPreference = "Stop"
 
@@ -39,16 +39,9 @@ function Get-ConnectedPhones {
     foreach ($line in $lines) {
         if ($line -match "^(\S+)\s+device\s*$") {
             $serial = $Matches[1]
-            # Prefer physical phones; skip emulators unless that is all you have
+            # Physical USB/Wi‑Fi phones only — emulators never count as "connected"
             if ($serial -notmatch "^emulator-") {
                 $phones += $serial
-            }
-        }
-    }
-    if ($phones.Count -eq 0) {
-        foreach ($line in $lines) {
-            if ($line -match "^(emulator-\d+)\s+device\s*$") {
-                $phones += $Matches[1]
             }
         }
     }

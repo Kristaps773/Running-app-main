@@ -52,9 +52,9 @@ data class RouteGenerationPreferences(
 )
 
 data class MapDisplayPreferences(
-    val showAirLegLines: Boolean = true,
-    val showAirLegDistanceLabels: Boolean = true,
-    val showWalkingPathPolyline: Boolean = true,
+    val showAirLegLines: Boolean = false,
+    val showAirLegDistanceLabels: Boolean = false,
+    val showWalkingPathPolyline: Boolean = false,
     val basemapStyle: BasemapStyle = BasemapStyle.STANDARD,
     val includePdfLegends: Boolean = false,
     /** GPS “you are here” disc while an active run is on the map. */
@@ -280,9 +280,10 @@ class UserPreferencesStore @Inject constructor(
         const val DEFAULT_AIR_TOLERANCE_M = 1500f
         const val MIN_AIR_TOLERANCE_M = 200.0
         const val MAX_AIR_TOLERANCE_M = 2500.0
-        const val DEFAULT_SHOW_AIR_LEGS = true
-        const val DEFAULT_SHOW_AIR_LABELS = true
-        const val DEFAULT_SHOW_WALKING_PATH = true
+        /** Off by default: orienteering-style course without routing “hints”. */
+        const val DEFAULT_SHOW_AIR_LEGS = false
+        const val DEFAULT_SHOW_AIR_LABELS = false
+        const val DEFAULT_SHOW_WALKING_PATH = false
         const val DEFAULT_SHOW_YOU_ARE_HERE_DURING_RUN = false
         const val DEFAULT_INCLUDE_PDF_LEGENDS = false
         const val DEFAULT_USE_IOF_COURSE_OVERPRINT = false

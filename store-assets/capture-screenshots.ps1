@@ -85,6 +85,8 @@ function Capture-Scene([string]$scene, [string]$fileBase, [int]$waitSec) {
 Capture-Scene "setup" "01-setup" 8
 # Map/run need long waits so OSM tiles finish before screencap.
 Capture-Scene "map" "02-map" 28
+# Expanded route preview sheet with Export PDF (sheet not collapsed).
+Capture-Scene "map_pdf" "08-map-pdf" 28
 Capture-Scene "run" "03-active-run" 28
 Capture-Scene "history" "04-history" 8
 Capture-Scene "favorites" "05-favorites" 8

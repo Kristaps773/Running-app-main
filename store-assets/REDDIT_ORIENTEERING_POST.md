@@ -1,0 +1,34 @@
+# r/orienteering post (closed beta)
+
+Label as self promotion. Attach `01-setup.png`, `02-map.png`, `03-active-run.png` from `store-assets/screenshots/`.
+
+## Title
+
+`(Self Promotion) [Beta][Android] OrienteerRun: GPS checkpoint loops for outdoor training`
+
+## Body
+
+Hi everyone. I’m building **OrienteerRun**, a free Android app for people who want something closer to **orienteering** than another step counter.
+
+**What it does**
+
+1. You pick a target distance and it generates a loop near you (OpenStreetMap + routing).  
+2. It drops real GPS checkpoints along the route; you run and hit them in order.  
+3. Route preview on a map before you start; live distance, time, and pace while you run.  
+4. Run history stays on your device. No ads, no account, no social feed in this beta.
+
+This is not a full forest O map replacement. It is street / park style training with controls, useful when you want structure outdoors without a printed course.
+
+**What I’m looking for**
+
+1. Does route generation work in your area?  
+2. Is the checkpoint flow clear on a real run?  
+3. Crashes, GPS weirdness, confusing UI (phone model + Android version help).
+
+**How to join (same Google account as on your phone)**
+
+1. Join the tester group: https://groups.google.com/g/orienteerrun-testers  
+2. Opt in to closed testing: https://play.google.com/apps/testing/com.orienteer.app  
+3. Install from Play: https://play.google.com/store/apps/details?id=com.orienteer.app  
+
+Reply or DM if something breaks. Thanks for helping stress test before a wider release.

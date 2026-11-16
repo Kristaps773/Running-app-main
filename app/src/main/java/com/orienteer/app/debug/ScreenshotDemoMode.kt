@@ -10,7 +10,7 @@ object ScreenshotDemoMode {
     @Volatile
     var seedRequested: Boolean = false
 
-    /** One of: setup, map, run, history, settings, favorites — or null for normal launch. */
+    /** One of: setup, map, map_pdf, run, history, settings, favorites — or null for normal launch. */
     @Volatile
     var scene: String? = null
 
@@ -23,5 +23,5 @@ object ScreenshotDemoMode {
             scene.equals("run", ignoreCase = true)
 
     val knownScenes: Set<String> =
-        setOf("setup", "map", "run", "history", "settings", "favorites")
+        setOf("setup", "map", "map_pdf", "run", "history", "settings", "favorites")
 }
