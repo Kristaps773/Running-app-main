@@ -21,11 +21,11 @@ Reply posted acknowledging the points below.
 4. **Basemap style picker instead of cycle button**  
    Top right map type control: open a list / sheet of all styles instead of cycling through many options.
 
-5. **Two finger map rotation**  
-   Allow rotating the map (not only turning the phone). Useful for arm phone holders.
+5. **Two finger map rotation** — shipped  
+   Interactive maps: two-finger rotate + reset-to-north control beside zoom. Compact history thumbnails stay fixed.
 
-6. **North lines when map can rotate**  
-   Add north lines (or a clear north indicator) so alignment stays readable after rotation. Design TBD.
+6. **North lines when map can rotate** — shipped  
+   True-north teal meridians under the course (Settings toggle, default on).
 
 ### P2 — Content / generation quality
 
@@ -46,7 +46,7 @@ Reply posted acknowledging the points below.
 - [x] New users get air leg labels (and ideally air legs) off or less noisy by default  
 - [ ] Distance wording explains air vs path  
 - [ ] Map style is choosable from a list  
-- [ ] Map rotation + north lines designed and implemented  
+- [x] Map rotation + north lines designed and implemented  
 - [ ] Control description strategy decided (even if v1 is “no description” / landmark name only)  
 - [ ] IOF map research note or spike (OpenOrienteering / OCAD path)
 

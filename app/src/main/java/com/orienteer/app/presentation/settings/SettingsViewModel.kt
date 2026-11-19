@@ -62,6 +62,7 @@ class SettingsViewModel @Inject constructor(
                 showAirLegLines = UserPreferencesStore.DEFAULT_SHOW_AIR_LEGS,
                 showAirLegDistanceLabels = UserPreferencesStore.DEFAULT_SHOW_AIR_LABELS,
                 showWalkingPathPolyline = UserPreferencesStore.DEFAULT_SHOW_WALKING_PATH,
+                showNorthLines = UserPreferencesStore.DEFAULT_SHOW_NORTH_LINES,
                 basemapStyle = UserPreferencesStore.DEFAULT_BASEMAP_STYLE,
                 includePdfLegends = UserPreferencesStore.DEFAULT_INCLUDE_PDF_LEGENDS,
                 showYouAreHereDuringRun = UserPreferencesStore.DEFAULT_SHOW_YOU_ARE_HERE_DURING_RUN,
@@ -95,6 +96,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setShowWalkingPathPolyline(value: Boolean) {
         viewModelScope.launch { userPreferencesStore.setShowWalkingPathPolyline(value) }
+    }
+
+    fun setShowNorthLines(value: Boolean) {
+        viewModelScope.launch { userPreferencesStore.setShowNorthLines(value) }
     }
 
     fun setShowYouAreHereDuringRun(value: Boolean) {

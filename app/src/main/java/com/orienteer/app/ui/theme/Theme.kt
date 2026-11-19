@@ -13,7 +13,9 @@ data class MapOverlayColors(
     val plannedPath: Color,
     val actualPath: Color,
     val airLeg: Color,
-    val airLegHalo: Color
+    val airLegHalo: Color,
+    /** DESIGN tertiary teal — bearing / ancillary north lines (not course magenta). */
+    val northLine: Color
 ) {
     /** Walking / GPS track color (same as [actualPath]). */
     val walkingPath: Color get() = actualPath
@@ -24,7 +26,8 @@ val LocalMapOverlayColors = staticCompositionLocalOf {
         plannedPath = MapPlannedPath,
         actualPath = MapActualPath,
         airLeg = MapAirLeg,
-        airLegHalo = MapAirLegHalo
+        airLegHalo = MapAirLegHalo,
+        northLine = MapNorthLine
     )
 }
 
@@ -112,14 +115,16 @@ fun OrienteerTheme(
             plannedPath = MapPlannedPath,
             actualPath = MapActualPath,
             airLeg = MapAirLeg,
-            airLegHalo = MapAirLegHalo
+            airLegHalo = MapAirLegHalo,
+            northLine = MapNorthLine
         )
     } else {
         MapOverlayColors(
             plannedPath = LightMapPlannedPath,
             actualPath = LightMapActualPath,
             airLeg = LightMapAirLeg,
-            airLegHalo = LightMapAirLegHalo
+            airLegHalo = LightMapAirLegHalo,
+            northLine = LightMapNorthLine
         )
     }
 

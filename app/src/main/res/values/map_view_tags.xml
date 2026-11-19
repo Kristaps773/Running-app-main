@@ -8,4 +8,11 @@
     <item name="map_tag_basemap_style" type="id" />
     <item name="map_tag_run_gesture_listener" type="id" />
     <item name="map_tag_suppress_gesture" type="id" />
+    <item name="map_tag_rotation_gesture" type="id" />
+    <item name="map_tag_location_animator" type="id" />
+    <item name="map_tag_location_target" type="id" />
+    <item name="map_tag_location_displayed" type="id" />
+    <item name="map_tag_follow_target" type="id" />
+    <item name="map_tag_path_lead_key" type="id" />
 </resources>
+

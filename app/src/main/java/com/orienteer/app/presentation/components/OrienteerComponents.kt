@@ -105,7 +105,8 @@ fun OrienteerTopBar(
     onBack: () -> Unit = {},
     onSettings: (() -> Unit)? = null,
     trailingIcon: ImageVector? = null,
-    onTrailingClick: (() -> Unit)? = null
+    onTrailingClick: (() -> Unit)? = null,
+    trailingContent: (@Composable () -> Unit)? = null
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -149,6 +150,7 @@ fun OrienteerTopBar(
                         )
                     }
                 }
+                trailingContent != null -> trailingContent()
                 trailingIcon != null && onTrailingClick != null -> {
                     IconButton(onClick = onTrailingClick) {
                         Icon(
@@ -798,7 +800,7 @@ fun CheckpointTargetCard(
                     .fillMaxWidth()
                     .height(6.dp)
                     .clip(RoundedCornerShape(3.dp)),
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
                 trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f)
             )
         }

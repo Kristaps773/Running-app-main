@@ -58,14 +58,16 @@ class LocationRepository @Inject constructor(
         }
 
     /**
-     * Continuous location updates stream for run tracking.
-     * Emits a new [GeoPoint] every [intervalMs] milliseconds.
+     * Continuous location updates stream for run tracking / live map marker.
+     * Emits a new [GeoPoint] about every [intervalMs] milliseconds.
+     * Max delay stays equal to the interval so Fused Location does not batch
+     * (and stall) the “you are here” marker while walking.
      */
     @SuppressLint("MissingPermission")
-    fun locationUpdates(intervalMs: Long = 2_000L): Flow<GeoPoint> = callbackFlow {
+    fun locationUpdates(intervalMs: Long = 1_000L): Flow<GeoPoint> = callbackFlow {
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
             .setMinUpdateIntervalMillis(intervalMs / 2)
-            .setMaxUpdateDelayMillis(intervalMs * 2)
+            .setMaxUpdateDelayMillis(intervalMs)
             .build()
 
         val callback = object : LocationCallback() {

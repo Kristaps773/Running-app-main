@@ -24,6 +24,7 @@ data class BackupSettingsSnapshot(
     val showAirLegLines: Boolean? = null,
     val showAirLegDistanceLabels: Boolean? = null,
     val showWalkingPathPolyline: Boolean? = null,
+    val showNorthLines: Boolean? = null,
     val showYouAreHereDuringRun: Boolean? = null,
     val basemapStyle: String? = null,
     val includePdfLegends: Boolean? = null,

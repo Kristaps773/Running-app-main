@@ -95,18 +95,13 @@ class MapViewModel @Inject constructor(
     fun getNextCheckpoint(): Checkpoint? =
         _uiState.value.route?.checkpoints?.firstOrNull { !it.isStart && !it.isReached }
 
-    fun cycleBasemapStyle() {
-        viewModelScope.launch {
-            val styles = BasemapStyle.entries
-            val current = mapDisplayPreferences.value.basemapStyle
-            val next = styles[(styles.indexOf(current) + 1) % styles.size]
-            preferencesStore.setBasemapStyle(next)
-        }
+    fun setBasemapStyle(style: BasemapStyle) {
+        viewModelScope.launch { preferencesStore.setBasemapStyle(style) }
     }
 
     private companion object {
-        /** Preview map: slow GPS updates — only need a rough "you are here" dot. */
-        private const val PREVIEW_LOCATION_INTERVAL_MS = 8_000L
-        private const val PREVIEW_LOCATION_MIN_MOVE_M = 12.0
+        /** Preview map: still lighter than an active run, but keep pace with walking. */
+        private const val PREVIEW_LOCATION_INTERVAL_MS = 2_000L
+        private const val PREVIEW_LOCATION_MIN_MOVE_M = 4.0
     }
 }

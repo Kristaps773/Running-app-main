@@ -55,6 +55,8 @@ data class MapDisplayPreferences(
     val showAirLegLines: Boolean = false,
     val showAirLegDistanceLabels: Boolean = false,
     val showWalkingPathPolyline: Boolean = false,
+    /** True-north meridian guides (on by default when the map can rotate). */
+    val showNorthLines: Boolean = true,
     val basemapStyle: BasemapStyle = BasemapStyle.STANDARD,
     val includePdfLegends: Boolean = false,
     /** GPS “you are here” disc while an active run is on the map. */
@@ -86,6 +88,7 @@ class UserPreferencesStore @Inject constructor(
     private val keyShowAirLegs = booleanPreferencesKey("show_air_leg_lines")
     private val keyShowAirLabels = booleanPreferencesKey("show_air_leg_distance_labels")
     private val keyShowWalkingPath = booleanPreferencesKey("show_walking_path_polyline")
+    private val keyShowNorthLines = booleanPreferencesKey("show_north_lines")
     private val keyShowYouAreHereDuringRun = booleanPreferencesKey("show_you_are_here_during_run")
     private val keyIncludePdfLegends = booleanPreferencesKey("include_pdf_legends")
     private val keyUseIofCourseOverprint = booleanPreferencesKey("use_iof_course_overprint")
@@ -128,12 +131,13 @@ class UserPreferencesStore @Inject constructor(
         val air = p[keyShowAirLegs] ?: DEFAULT_SHOW_AIR_LEGS
         val basemapStyle = p[keyBasemapStyle]?.let(BasemapStyle::fromStorage)
             ?: if (p[keyDarkBasemap] == true) BasemapStyle.DARK else DEFAULT_BASEMAP_STYLE
-        // Independent of basemap — do not auto-lock overprint to Pseud-O / Street-O.
+        // Independent of basemap — do not auto-lock overprint to Pseud-O.
         val iofOverprint = p[keyUseIofCourseOverprint] ?: DEFAULT_USE_IOF_COURSE_OVERPRINT
         MapDisplayPreferences(
             showAirLegLines = air,
             showAirLegDistanceLabels = p[keyShowAirLabels] ?: DEFAULT_SHOW_AIR_LABELS,
             showWalkingPathPolyline = p[keyShowWalkingPath] ?: DEFAULT_SHOW_WALKING_PATH,
+            showNorthLines = p[keyShowNorthLines] ?: DEFAULT_SHOW_NORTH_LINES,
             basemapStyle = basemapStyle,
             includePdfLegends = p[keyIncludePdfLegends] ?: DEFAULT_INCLUDE_PDF_LEGENDS,
             showYouAreHereDuringRun = p[keyShowYouAreHereDuringRun]
@@ -190,6 +194,10 @@ class UserPreferencesStore @Inject constructor(
         dataStore.edit { it[keyShowWalkingPath] = value }
     }
 
+    suspend fun setShowNorthLines(value: Boolean) {
+        dataStore.edit { it[keyShowNorthLines] = value }
+    }
+
     suspend fun setShowYouAreHereDuringRun(value: Boolean) {
         dataStore.edit { it[keyShowYouAreHereDuringRun] = value }
     }
@@ -232,6 +240,7 @@ class UserPreferencesStore @Inject constructor(
             showAirLegLines = map.showAirLegLines,
             showAirLegDistanceLabels = map.showAirLegDistanceLabels,
             showWalkingPathPolyline = map.showWalkingPathPolyline,
+            showNorthLines = map.showNorthLines,
             basemapStyle = map.basemapStyle.name,
             includePdfLegends = map.includePdfLegends,
             showYouAreHereDuringRun = map.showYouAreHereDuringRun,
@@ -250,6 +259,7 @@ class UserPreferencesStore @Inject constructor(
                     it.coerceIn(MIN_AIR_TOLERANCE_M.toFloat(), MAX_AIR_TOLERANCE_M.toFloat())
             }
             snapshot.showWalkingPathPolyline?.let { prefs[keyShowWalkingPath] = it }
+            snapshot.showNorthLines?.let { prefs[keyShowNorthLines] = it }
             snapshot.showYouAreHereDuringRun?.let { prefs[keyShowYouAreHereDuringRun] = it }
             snapshot.includePdfLegends?.let { prefs[keyIncludePdfLegends] = it }
             snapshot.useIofCourseOverprint?.let { prefs[keyUseIofCourseOverprint] = it }
@@ -284,6 +294,7 @@ class UserPreferencesStore @Inject constructor(
         const val DEFAULT_SHOW_AIR_LEGS = false
         const val DEFAULT_SHOW_AIR_LABELS = false
         const val DEFAULT_SHOW_WALKING_PATH = false
+        const val DEFAULT_SHOW_NORTH_LINES = true
         const val DEFAULT_SHOW_YOU_ARE_HERE_DURING_RUN = false
         const val DEFAULT_INCLUDE_PDF_LEGENDS = false
         const val DEFAULT_USE_IOF_COURSE_OVERPRINT = false

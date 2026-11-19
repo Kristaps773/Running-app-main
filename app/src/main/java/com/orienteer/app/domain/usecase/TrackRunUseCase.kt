@@ -41,19 +41,34 @@ class TrackRunUseCase @Inject constructor(
     ): RunSession {
         if (!session.isActive || session.isPaused) return session
 
-        // Accumulate distance from the last tracked point
-        val addedDistance = if (session.trackedPoints.isNotEmpty()) {
+        // Accumulate distance from the last *accepted* tracked point.
+        // Sub-noise hops must not replace that anchor — otherwise 1 Hz GPS while
+        // walking (~1–2 m/fix) never reaches GPS_NOISE_MIN_M and distance stays ~0.
+        val (addedDistance, newPoints, newPointTimes) = if (session.trackedPoints.isEmpty()) {
+            Triple(0.0, listOf(newPoint), listOf(timestampMs))
+        } else {
             val prev = session.trackedPoints.last()
             val d = GeoUtils.distanceMeters(prev, newPoint)
             when {
-                d > GPS_SPIKE_MAX_M -> 0.0
-                d < GPS_NOISE_MIN_M -> 0.0
-                else -> d
+                d < GPS_NOISE_MIN_M -> {
+                    // Do not advance the distance anchor on sub-noise hops.
+                    Triple(0.0, session.trackedPoints, session.trackedPointTimestampsMs)
+                }
+                d > GPS_SPIKE_MAX_M -> {
+                    // Drop distance for this jump, but re-anchor so tracking can continue.
+                    Triple(
+                        0.0,
+                        session.trackedPoints + newPoint,
+                        session.trackedPointTimestampsMs + timestampMs
+                    )
+                }
+                else -> Triple(
+                    d,
+                    session.trackedPoints + newPoint,
+                    session.trackedPointTimestampsMs + timestampMs
+                )
             }
-        } else 0.0
-
-        val newPoints = session.trackedPoints + newPoint
-        val newPointTimes = session.trackedPointTimestampsMs + timestampMs
+        }
         val newDistance = session.totalDistanceM + addedDistance
 
         // Check whether the current target checkpoint has been reached

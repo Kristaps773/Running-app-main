@@ -17,11 +17,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import android.widget.FrameLayout
 import com.orienteer.app.data.model.Checkpoint
 import com.orienteer.app.data.model.GeoPoint
+import com.orienteer.app.presentation.map.AirLegsOverlay
 import com.orienteer.app.presentation.map.IofCourseOverprintOverlay
 import com.orienteer.app.presentation.map.addCheckpointMarkers
-import com.orienteer.app.presentation.map.addOrienteeringAirLegOverlays
 import com.orienteer.app.presentation.map.addReplayPolylines
-import com.orienteer.app.presentation.map.airLegSegmentsFromCheckpoints
 import com.orienteer.app.ui.theme.mapOverlayColors
 import com.orienteer.app.presentation.map.boundingBoxForReplay
 import com.orienteer.app.presentation.map.configureReplayMapInteraction
@@ -120,10 +119,12 @@ fun RunReplayMap(
 
             addReplayPolylines(map, planned, actual) {
                 if (!useIofCourseOverprint && checkpoints.size >= 2) {
-                    map.addOrienteeringAirLegOverlays(
-                        airLegSegmentsFromCheckpoints(checkpoints),
-                        airColor,
-                        airHaloColor
+                    map.overlays.add(
+                        AirLegsOverlay(
+                            checkpoints = checkpoints,
+                            airColorArgb = airColor,
+                            haloColorArgb = airHaloColor
+                        )
                     )
                 }
             }

@@ -18,12 +18,12 @@ import kotlin.math.ceil
 import kotlin.math.max
 
 /**
- * Full course footpath at low visibility, plus one continuous local lead ribbon
- * (bright near the runner → quieter over [RoutePolylineProgress.LEAD_LOOKAHEAD_M]).
+ * Full course footpath at low visibility, plus a lead ribbon from the runner
+ * to the next checkpoint center (bright at runner → quieter toward the CP).
  */
 class DirectionalWalkingPathOverlay(
     private val polyline: List<GeoPoint>,
-    private val progress: RoutePolylineProgress.Progress,
+    private val leadRibbon: RoutePolylineProgress.LeadRibbon,
     private val paintColors: WalkingPathPaint
 ) : Overlay() {
 
@@ -63,9 +63,8 @@ class DirectionalWalkingPathOverlay(
         if (shadow || polyline.size < 2) return
         val projection = mapView.projection ?: return
         drawFullCourseDim(canvas, projection)
-        val ribbon = RoutePolylineProgress.activeLeadRibbon(polyline, progress)
-        if (ribbon.points.size >= 2) {
-            drawRibbon(canvas, projection, ribbon)
+        if (leadRibbon.points.size >= 2) {
+            drawRibbon(canvas, projection, leadRibbon)
         }
     }
 

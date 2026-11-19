@@ -5,9 +5,13 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
 import com.orienteer.app.data.model.GeoPoint
+import com.orienteer.app.presentation.map.AirLegCrossingGaps
+import com.orienteer.app.presentation.map.CourseLegStroke
 import com.orienteer.app.presentation.map.IOF_PURPLE_ARGB
 import com.orienteer.app.presentation.map.IofCourseGeometry
+import com.orienteer.app.presentation.map.NorthLinesOverlay
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -61,12 +65,17 @@ object PdfVectorCourse {
         circleDiameterMm: Double,
         lineWidthMm: Double = courseLineWidthMm()
     ) {
+        val strokeW = (lineWidthMm * PT_PER_MM).toFloat().coerceAtLeast(0.7f)
         val purple = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = IOF_PURPLE_ARGB
             style = Paint.Style.STROKE
-            strokeCap = Paint.Cap.ROUND
+            strokeCap = Paint.Cap.BUTT
             strokeJoin = Paint.Join.ROUND
-            strokeWidth = (lineWidthMm * PT_PER_MM).toFloat().coerceAtLeast(0.7f)
+            strokeWidth = strokeW
+        }
+        val purpleFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = IOF_PURPLE_ARGB
+            style = Paint.Style.FILL
         }
         val fillText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = IOF_PURPLE_ARGB
@@ -77,10 +86,27 @@ object PdfVectorCourse {
 
         val radiusPt = (circleDiameterMm / 2.0 * PT_PER_MM).toFloat()
 
-        plan.legs.forEach { (from, to) ->
-            val a = project(from) ?: return@forEach
-            val b = project(to) ?: return@forEach
-            canvas.drawLine(a.first, a.second, b.first, b.second, purple)
+        AirLegCrossingGaps.gappedPieces(plan.legs, symbols = plan.obstacles).forEach { piece ->
+            val a = project(piece.from) ?: return@forEach
+            val b = project(piece.to) ?: return@forEach
+            val startCut = piece.startCutBearingDeg?.let {
+                CourseLegStroke.screenDirFromBearing(piece.from, it, project)
+            }
+            val endCut = piece.endCutBearingDeg?.let {
+                CourseLegStroke.screenDirFromBearing(piece.to, it, project)
+            }
+            canvas.drawPath(
+                CourseLegStroke.beveledOutline(
+                    x0 = a.first,
+                    y0 = a.second,
+                    x1 = b.first,
+                    y1 = b.second,
+                    halfWidth = strokeW * 0.5f,
+                    startCutDir = startCut,
+                    endCutDir = endCut
+                ),
+                purpleFill
+            )
         }
 
         plan.symbols.forEach { symbol ->
@@ -107,6 +133,109 @@ object PdfVectorCourse {
                 }
             }
         }
+    }
+
+    /**
+     * True-north meridians on the PDF. Lines are clipped to [mapRect]; arrowheads sit at
+     * the north edge **just above** the map so they stay visible and clear of course symbols.
+     */
+    fun drawNorthMeridians(
+        canvas: Canvas,
+        mapRect: PdfRect,
+        longitudes: List<Double>,
+        latSouth: Double,
+        latNorth: Double,
+        project: (GeoPoint) -> Pair<Float, Float>?,
+        colorArgb: Int = 0xD100695C.toInt()
+    ) {
+        val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 2.25f
+            color = colorArgb
+            strokeCap = Paint.Cap.ROUND
+        }
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = colorArgb
+        }
+        val arrow = Path()
+        // Tip peeks into the page margin above the map (~2 mm).
+        val tipAboveMap = (2.0 * PT_PER_MM).toFloat().coerceAtMost(mapRect.top - 1f)
+        val arrowSize = (3.6 * PT_PER_MM).toFloat() // ~3.6 mm on paper
+
+        for (lon in longitudes) {
+            val a = project(GeoPoint(latSouth, lon)) ?: continue
+            val b = project(GeoPoint(latNorth, lon)) ?: continue
+            // Geographic north end has smaller PDF Y (page Y grows downward).
+            val northIsB = b.second <= a.second
+            val xN = if (northIsB) b.first else a.first
+            val yN = if (northIsB) b.second else a.second
+            val xS = if (northIsB) a.first else b.first
+            val yS = if (northIsB) a.second else b.second
+            val ndx = xN - xS
+            val ndy = yN - yS
+            val len = hypot(ndx.toDouble(), ndy.toDouble()).toFloat()
+            if (len < 8f) continue
+            val ux = ndx / len
+            val uy = ndy / len
+
+            // Clip stroke to the map frame (extended geo tips would be off-page).
+            val xTop = xOnLineAtY(xS, yS, xN, yN, mapRect.top)
+            val xBot = xOnLineAtY(xS, yS, xN, yN, mapRect.bottom)
+            canvas.drawLine(xBot, mapRect.bottom, xTop, mapRect.top, stroke)
+
+            // Arrow tip just above the map on this meridian (along true-north dir).
+            val tipX = xTop + ux * tipAboveMap
+            val tipY = mapRect.top + uy * tipAboveMap
+            drawMeridianNorthArrowAt(
+                canvas = canvas,
+                path = arrow,
+                fill = fill,
+                tipX = tipX,
+                tipY = tipY,
+                ux = ux,
+                uy = uy,
+                size = arrowSize
+            )
+        }
+    }
+
+    /** X on segment (x0,y0)→(x1,y1) at a given Y (meridians are nearly vertical). */
+    private fun xOnLineAtY(
+        x0: Float,
+        y0: Float,
+        x1: Float,
+        y1: Float,
+        y: Float
+    ): Float {
+        val dy = y1 - y0
+        if (kotlin.math.abs(dy) < 1e-3f) return (x0 + x1) * 0.5f
+        val t = (y - y0) / dy
+        return x0 + t * (x1 - x0)
+    }
+
+    /** Filled triangle; tip at ([tipX],[tipY]), pointing along unit ([ux],[uy]) toward north. */
+    private fun drawMeridianNorthArrowAt(
+        canvas: Canvas,
+        path: Path,
+        fill: Paint,
+        tipX: Float,
+        tipY: Float,
+        ux: Float,
+        uy: Float,
+        size: Float
+    ) {
+        val baseX = tipX - ux * size
+        val baseY = tipY - uy * size
+        val half = size * 0.55f
+        val px = -uy * half
+        val py = ux * half
+        path.reset()
+        path.moveTo(tipX, tipY)
+        path.lineTo(baseX + px, baseY + py)
+        path.lineTo(baseX - px, baseY - py)
+        path.close()
+        canvas.drawPath(path, fill)
     }
 
     /**

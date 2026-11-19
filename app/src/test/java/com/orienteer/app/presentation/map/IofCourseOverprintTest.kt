@@ -68,4 +68,12 @@ class IofCourseOverprintTest {
             com.orienteer.app.data.local.BasemapStyle.fromStorage("ORIENTEERING")
         )
     }
+
+    @Test
+    fun fromStorage_migratesLegacyStreetO() {
+        assertEquals(
+            com.orienteer.app.data.local.BasemapStyle.PSEUDO_O,
+            com.orienteer.app.data.local.BasemapStyle.fromStorage("STREET_O")
+        )
+    }
 }

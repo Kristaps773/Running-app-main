@@ -123,13 +123,8 @@ class SetupViewModel @Inject constructor(
                 MapDisplayPreferences()
             )
 
-    fun cycleBasemapStyle() {
-        viewModelScope.launch {
-            val styles = BasemapStyle.entries
-            val current = mapDisplayPreferences.value.basemapStyle
-            val next = styles[(styles.indexOf(current) + 1) % styles.size]
-            preferencesStore.setBasemapStyle(next)
-        }
+    fun setBasemapStyle(style: BasemapStyle) {
+        viewModelScope.launch { preferencesStore.setBasemapStyle(style) }
     }
 
     private data class WarmupKey(

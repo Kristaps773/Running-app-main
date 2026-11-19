@@ -17,6 +17,7 @@ import com.orienteer.app.data.model.GeoPoint
 import com.orienteer.app.data.model.Route
 import com.orienteer.app.data.model.RunSession
 import com.orienteer.app.data.repository.RouteRepository
+import com.orienteer.app.debug.AgentDebugLog
 import com.orienteer.app.debug.ScreenshotDemoMode
 import com.orienteer.app.debug.ScreenshotDemoSeeder
 import com.orienteer.app.domain.RunPathLeadMode
@@ -34,6 +35,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import javax.inject.Inject
 
 data class RunUiState(
@@ -74,20 +76,19 @@ class RunViewModel @Inject constructor(
     private var lastRerouteAtMs: Long = 0L
     private var lastBearingLocation: GeoPoint? = null
     private var rerouteJob: Job? = null
+    private var lastLeadAlongM: Double? = null
+    private var lastLeadSeg: Int? = null
+    private var lastLeadLogAtMs: Long = 0L
 
     companion object {
         private const val REROUTE_COOLDOWN_MS = 35_000L
         private const val OFF_PATH_TO_CHECK_M = 55.0
         private const val MIN_BEARING_MOVE_M = 8.0
+        private const val LEAD_DEBUG_MIN_MS = 800L
     }
 
-    fun cycleBasemapStyle() {
-        viewModelScope.launch {
-            val styles = BasemapStyle.entries
-            val current = mapDisplayPreferences.value.basemapStyle
-            val next = styles[(styles.indexOf(current) + 1) % styles.size]
-            userPreferencesStore.setBasemapStyle(next)
-        }
+    fun setBasemapStyle(style: BasemapStyle) {
+        viewModelScope.launch { userPreferencesStore.setBasemapStyle(style) }
     }
 
     private var trackingService: LocationTrackingService? = null
@@ -122,6 +123,9 @@ class RunViewModel @Inject constructor(
                         isFinished = session?.isActive == false && session?.finishedAt != null,
                         movementBearingDeg = bearing
                     )
+                    // #region agent log
+                    logPathLeadDebug(session, bearing)
+                    // #endregion
                     maybeSoftReroute(session)
                 }
             }
@@ -180,8 +184,119 @@ class RunViewModel @Inject constructor(
         lastBearingLocation = location
         if (prev == null) return null
         if (GeoUtils.distanceMeters(prev, location) < MIN_BEARING_MOVE_M) return null
-        return GeoUtils.bearingDegrees(prev, location).toFloat()
+        val next = GeoUtils.bearingDegrees(prev, location).toFloat()
+        // #region agent log
+        val delta = abs((((next - (_uiState.value.movementBearingDeg)) + 540f) % 360f) - 180f)
+        if (delta >= 60f) {
+            AgentDebugLog.log(
+                hypothesisId = "C",
+                location = "RunViewModel.updateMovementBearing",
+                message = "bearing jump",
+                data = mapOf(
+                    "prevBearing" to _uiState.value.movementBearingDeg,
+                    "nextBearing" to next,
+                    "deltaDeg" to delta,
+                    "moveM" to GeoUtils.distanceMeters(prev, location)
+                )
+            )
+        }
+        // #endregion
+        return next
     }
+
+    // #region agent log
+    private fun logPathLeadDebug(session: RunSession?, movementBearing: Float) {
+        if (session == null || !session.isActive || session.isPaused) return
+        val prefs = mapDisplayPreferences.value
+        if (!RunPathLeadMode.isEnabled(prefs.showWalkingPathPolyline, prefs.showYouAreHereDuringRun)) {
+            return
+        }
+        val route = _uiState.value.route ?: return
+        val location = session.trackedPoints.lastOrNull() ?: return
+        val guidance = _uiState.value.liveGuidancePolyline.ifEmpty { route.polylinePoints }
+        if (guidance.size < 2) return
+
+        val now = System.currentTimeMillis()
+        val cps = route.checkpoints
+        val cpIdx = session.currentCheckpointIdx.coerceIn(0, (cps.size - 1).coerceAtLeast(0))
+        val cpPositions = buildList {
+            if (cpIdx > 0) add(cps[cpIdx - 1].position)
+            for (i in cpIdx until cps.size) add(cps[i].position)
+        }
+        val leadNextIdx = if (cpIdx > 0) 1 else 0
+        val ordered = RoutePolylineProgress.projectTowardNextCheckpoint(
+            guidance,
+            location,
+            cpPositions,
+            leadNextIdx
+        )
+        val nearest = RoutePolylineProgress.projectWithAmbiguity(guidance, location)
+        val p = ordered
+        val prevAlong = lastLeadAlongM
+        val prevSeg = lastLeadSeg
+        val alongDelta = if (prevAlong != null) p.distanceAlongM - prevAlong else 0.0
+        val alongJump = prevAlong != null && abs(alongDelta) >= 40.0
+        val nearestDisagrees =
+            abs(nearest.best.distanceAlongM - p.distanceAlongM) >= 40.0
+        val alongs = RoutePolylineProgress.orderedWaypointAlongMeters(guidance, cpPositions)
+        val nextAlong = alongs.getOrNull(leadNextIdx.coerceIn(0, alongs.lastIndex)) ?: -1.0
+        val aheadPt = RoutePolylineProgress.pointAlongMeters(
+            guidance,
+            (p.distanceAlongM + 25.0).coerceAtMost(
+                if (nextAlong >= 0) nextAlong else p.distanceAlongM + p.remainingDistanceM
+            )
+        )
+        val pathBearing = GeoUtils.bearingDegrees(p.snapPoint, aheadPt)
+        val travelDelta = abs((((pathBearing - movementBearing) + 540.0) % 360.0) - 180.0)
+        val wrongWayVsTravel = travelDelta >= 120.0 && movementBearing != 0f
+
+        val shouldLog =
+            alongJump || nearestDisagrees || wrongWayVsTravel ||
+                (now - lastLeadLogAtMs >= LEAD_DEBUG_MIN_MS)
+        if (!shouldLog) return
+        lastLeadLogAtMs = now
+        lastLeadAlongM = p.distanceAlongM
+        lastLeadSeg = p.segmentIndex
+
+        AgentDebugLog.log(
+            hypothesisId = when {
+                nearestDisagrees -> "A"
+                alongJump -> "A"
+                wrongWayVsTravel -> "E"
+                else -> "A"
+            },
+            location = "RunViewModel.logPathLeadDebug",
+            message = when {
+                nearestDisagrees -> "ordered vs nearest disagree"
+                alongJump -> "snap along jump"
+                wrongWayVsTravel -> "lead vs travel mismatch"
+                else -> "ordered lead sample"
+            },
+            data = mapOf(
+                "seg" to p.segmentIndex,
+                "prevSeg" to (prevSeg ?: -1),
+                "alongM" to p.distanceAlongM,
+                "alongDeltaM" to alongDelta,
+                "toPathM" to p.distanceToPathM,
+                "remainM" to p.remainingDistanceM,
+                "nearestAlongM" to nearest.best.distanceAlongM,
+                "nearestToPathM" to nearest.best.distanceToPathM,
+                "nextCpAlongM" to nextAlong,
+                "pathBearing" to pathBearing,
+                "travelBearing" to movementBearing,
+                "pathVsTravelDeg" to travelDelta,
+                "guidancePts" to guidance.size,
+                "cpIdx" to cpIdx,
+                "alongJump" to alongJump,
+                "nearestDisagrees" to nearestDisagrees,
+                "wrongWayVsTravel" to wrongWayVsTravel,
+                "leadToNextCp" to true,
+                "runIdTag" to "post-fix"
+            ),
+            runId = "post-fix"
+        )
+    }
+    // #endregion
 
     private fun maybeSoftReroute(session: RunSession?) {
         if (session == null || !session.isActive || session.isPaused) return
@@ -194,8 +309,25 @@ class RunViewModel @Inject constructor(
         val guidance = _uiState.value.liveGuidancePolyline.ifEmpty { route.polylinePoints }
         if (guidance.size < 2) return
 
-        val progress = RoutePolylineProgress.project(guidance, location)
-        if (progress.distanceToPathM < OFF_PATH_TO_CHECK_M) return
+        val cps = route.checkpoints
+        val cpIdx = session.currentCheckpointIdx.coerceIn(0, (cps.size - 1).coerceAtLeast(0))
+        val cpPositions = buildList {
+            if (cpIdx > 0) add(cps[cpIdx - 1].position)
+            for (i in cpIdx until cps.size) add(cps[i].position)
+        }
+        val leadNextIdx = if (cpIdx > 0) 1 else 0
+        val progress = RoutePolylineProgress.projectTowardNextCheckpoint(
+            guidance,
+            location,
+            cpPositions,
+            leadNextIdx
+        )
+        if (progress.distanceToPathM < OFF_PATH_TO_CHECK_M) {
+            // #region agent log
+            // on-path: no reroute attempt
+            // #endregion
+            return
+        }
 
         val now = System.currentTimeMillis()
         if (now - lastRerouteAtMs < REROUTE_COOLDOWN_MS) return
@@ -205,14 +337,43 @@ class RunViewModel @Inject constructor(
         if (remaining.isEmpty()) return
 
         lastRerouteAtMs = now
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "B",
+            location = "RunViewModel.maybeSoftReroute",
+            message = "reroute attempt",
+            data = mapOf(
+                "toPathM" to progress.distanceToPathM,
+                "alongM" to progress.distanceAlongM,
+                "remainM" to progress.remainingDistanceM,
+                "guidancePts" to guidance.size,
+                "remainingCp" to remaining.size
+            )
+        )
+        // #endregion
         rerouteJob = viewModelScope.launch {
             val result = liveFootpathGuidance.maybeReroute(
                 currentLocation = location,
                 remainingCheckpoints = remaining,
                 currentGuidance = guidance
             ) ?: return@launch
+            // #region agent log
+            AgentDebugLog.log(
+                hypothesisId = "B",
+                location = "RunViewModel.maybeSoftReroute.result",
+                message = if (result.switched) "reroute switched" else "reroute kept",
+                data = mapOf(
+                    "switched" to result.switched,
+                    "newDistM" to result.distanceM,
+                    "newPts" to result.polyline.size,
+                    "oldRemainM" to progress.remainingDistanceM
+                )
+            )
+            // #endregion
             if (result.switched) {
                 _uiState.value = _uiState.value.copy(liveGuidancePolyline = result.polyline)
+                lastLeadAlongM = null
+                lastLeadSeg = null
             }
         }
     }

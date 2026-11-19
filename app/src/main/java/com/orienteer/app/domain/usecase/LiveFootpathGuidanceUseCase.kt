@@ -42,9 +42,12 @@ class LiveFootpathGuidanceUseCase @Inject constructor(
         }
         if (waypoints.size < 2) return null
 
+        // Active-run lead needs dense geometry — simplified (often ~3 pts) flips the lead at bends.
         val response = runCatching {
-            osrm.route(GeoUtils.toOsrmCoordinates(waypoints))
-                .parseJson(gson, OsrmRouteResponse::class.java)
+            osrm.route(
+                coordinates = GeoUtils.toOsrmCoordinates(waypoints),
+                overview = "full"
+            ).parseJson(gson, OsrmRouteResponse::class.java)
         }.getOrNull() ?: return null
 
         if (response.code != null && response.code != "Ok") return null

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -27,12 +28,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -43,7 +46,6 @@ import com.orienteer.app.R
 import com.orienteer.app.debug.ScreenshotDemoMode
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.orienteer.app.data.local.BasemapStyle
 import com.orienteer.app.presentation.components.GhostTextButton
 import com.orienteer.app.presentation.components.OrienteerTopBar
 import com.orienteer.app.presentation.components.PrimaryGreenButton
@@ -51,11 +53,16 @@ import com.orienteer.app.presentation.components.RouteBottomSheet
 import com.orienteer.app.presentation.components.RoutePlottingLoader
 import com.orienteer.app.domain.RunMapCameraMode
 import com.orienteer.app.domain.RunPathLeadMode
+import com.orienteer.app.domain.RunRollingPace
+import com.orienteer.app.presentation.map.BasemapStyleMenuButton
 import com.orienteer.app.presentation.map.MapAttributionBar
 import com.orienteer.app.presentation.map.MapChromeEndReserve
+import com.orienteer.app.presentation.map.MapFindMeClicks
 import com.orienteer.app.presentation.map.MapZoomControls
 import com.orienteer.app.presentation.map.OsmMapHost
 import com.orienteer.app.presentation.map.PathLeadDrawState
+import com.orienteer.app.presentation.map.centerOnVisibleArea
+import org.osmdroid.util.GeoPoint as OsmGeoPoint
 import org.osmdroid.views.MapView
 import com.orienteer.app.ui.components.OrienteerGhostButton
 import com.orienteer.app.util.RoutePdfExporter
@@ -80,7 +87,18 @@ fun RunScreen(
     var runPanelExpanded by remember {
         mutableStateOf(!(BuildConfig.DEBUG && ScreenshotDemoMode.collapseSheetsForCapture))
     }
+    var runPanelVisibleHeightPx by remember { mutableFloatStateOf(0f) }
     var mapViewRef by remember { mutableStateOf<MapView?>(null) }
+    val findMeActions = remember {
+        object {
+            var recenter: () -> Unit = {}
+            var resetNorth: () -> Unit = {}
+            val clicks = MapFindMeClicks(
+                onFindMe = { recenter() },
+                onResetNorth = { resetNorth() }
+            )
+        }
+    }
 
     LaunchedEffect(uiState.isFinished) {
         if (uiState.isFinished) onRunComplete()
@@ -136,22 +154,37 @@ fun RunScreen(
         else -> session.elapsedTimeMs
     }
     val distanceM = session?.totalDistanceM ?: 0.0
-    val paceLabel = GeoUtils.formatRunPace(distanceM, elapsedMs)
+    var paceLabel by remember { mutableStateOf("--:-- /km") }
+    LaunchedEffect(uiState.isRunning, uiState.isPaused, session?.trackedPoints?.size) {
+        val activeSession = session ?: return@LaunchedEffect
+        if (!uiState.isRunning) {
+            paceLabel = "--:-- /km"
+            return@LaunchedEffect
+        }
+        while (isActive) {
+            val nowMs = System.currentTimeMillis()
+            val totalElapsed = if (!uiState.isPaused) {
+                activeSession.activeElapsedMs(nowMs)
+            } else {
+                activeSession.elapsedTimeMs
+            }
+            paceLabel = RunRollingPace.formatDisplayPace(
+                points = activeSession.trackedPoints,
+                timestampsMs = activeSession.trackedPointTimestampsMs,
+                nowMs = nowMs,
+                totalDistanceM = activeSession.totalDistanceM,
+                totalElapsedMs = totalElapsed
+            )
+            delay(RunRollingPace.REFRESH_MS)
+        }
+    }
     val currentLocation = session?.trackedPoints?.lastOrNull()
     val nextCp = route?.checkpoints?.getOrNull(session?.currentCheckpointIdx ?: 0)
     val leadEnabled = RunPathLeadMode.isEnabled(
         showWalkingPathPolyline = mapDisplay.showWalkingPathPolyline,
         showYouAreHereDuringRun = mapDisplay.showYouAreHereDuringRun
     )
-    var cameraMode by remember { mutableStateOf(RunMapCameraMode.initial(leadEnabled)) }
-    LaunchedEffect(leadEnabled) {
-        cameraMode = RunMapCameraMode.onLeadEnabledChanged(cameraMode, leadEnabled)
-        if (leadEnabled && cameraMode == RunMapCameraMode.State.FreeLook &&
-            currentLocation != null
-        ) {
-            // Stay free-look until recenter (do not auto-lock).
-        }
-    }
+    var cameraMode by remember { mutableStateOf(RunMapCameraMode.initial()) }
     // Keep air legs on during a run; honor Settings toggle for the OSRM foot path.
     val mapPrefs = mapDisplay.copy(
         showAirLegLines = true,
@@ -160,10 +193,22 @@ fun RunScreen(
     val guidancePolyline = uiState.liveGuidancePolyline.ifEmpty {
         route?.polylinePoints.orEmpty()
     }
+    // Previous + remaining CPs only so soft-reroute polylines still order correctly.
+    val cps = route?.checkpoints.orEmpty()
+    val nextIdx = (session?.currentCheckpointIdx ?: 0).coerceIn(0, (cps.size - 1).coerceAtLeast(0))
+    val leadCheckpoints = remember(route?.id, nextIdx, cps.size) {
+        buildList {
+            if (nextIdx > 0) add(cps[nextIdx - 1].position)
+            for (i in nextIdx until cps.size) add(cps[i].position)
+        }
+    }
+    val leadNextIdx = if (nextIdx > 0) 1 else 0
     val pathLead = if (leadEnabled && guidancePolyline.size >= 2) {
         PathLeadDrawState(
             guidancePolyline = guidancePolyline,
-            progressLocation = currentLocation
+            progressLocation = currentLocation,
+            checkpointPositions = leadCheckpoints,
+            nextCheckpointIdx = leadNextIdx
         )
     } else {
         null
@@ -192,14 +237,13 @@ fun RunScreen(
                 basemapStyle = mapDisplay.basemapStyle,
                 interactive = true,
                 pathLead = pathLead,
-                followCamera = leadEnabled &&
-                    RunMapCameraMode.shouldAutoFollow(cameraMode) &&
+                followCamera = RunMapCameraMode.shouldAutoFollow(cameraMode) &&
                     currentLocation != null,
+                followLocation = currentLocation,
                 mapBearingDeg = uiState.movementBearingDeg,
+                followBottomInsetPx = runPanelVisibleHeightPx,
                 onUserMapGesture = {
-                    if (leadEnabled) {
-                        cameraMode = RunMapCameraMode.onUserGesture(cameraMode)
-                    }
+                    cameraMode = RunMapCameraMode.onUserGesture(cameraMode)
                 },
                 onMapReady = { mapViewRef = it },
                 modifier = Modifier.fillMaxSize()
@@ -211,11 +255,12 @@ fun RunScreen(
             )
         }
 
-        val mapChromeBottom = if (runPanelExpanded) 220.dp else 72.dp
         Column(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = OrienteerSpacing.md, bottom = mapChromeBottom)
+                .navigationBarsPadding()
+                .padding(end = OrienteerSpacing.md, bottom = OrienteerSpacing.sm)
+                .graphicsLayer { translationY = -runPanelVisibleHeightPx }
                 .zIndex(2f),
             horizontalAlignment = Alignment.End,
             verticalArrangement = Arrangement.spacedBy(OrienteerSpacing.xs)
@@ -224,12 +269,30 @@ fun RunScreen(
                 onZoomIn = { mapViewRef?.controller?.zoomIn() },
                 onZoomOut = { mapViewRef?.controller?.zoomOut() }
             )
-            if (leadEnabled &&
-                cameraMode == RunMapCameraMode.State.FreeLook &&
-                currentLocation != null
-            ) {
+            if (currentLocation != null) {
+                findMeActions.recenter = {
+                    mapViewRef?.let { map ->
+                        map.centerOnVisibleArea(
+                            OsmGeoPoint(
+                                currentLocation.latitude,
+                                currentLocation.longitude
+                            ),
+                            runPanelVisibleHeightPx
+                        )
+                        // Seed so the next compose pass does not re-animate to the same fix.
+                        map.setTag(
+                            R.id.map_tag_follow_target,
+                            "${currentLocation.latitude},${currentLocation.longitude}"
+                        )
+                    }
+                    cameraMode = RunMapCameraMode.onRecenter(cameraMode)
+                }
+                findMeActions.resetNorth = {
+                    mapViewRef?.mapOrientation = 0f
+                    mapViewRef?.invalidate()
+                }
                 FloatingActionButton(
-                    onClick = { cameraMode = RunMapCameraMode.onRecenter(cameraMode) },
+                    onClick = { findMeActions.clicks.onClick() },
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                     contentColor = MaterialTheme.colorScheme.primary
                 ) {
@@ -242,11 +305,13 @@ fun RunScreen(
             basemapStyle = mapDisplay.basemapStyle,
             modifier = Modifier
                 .align(Alignment.BottomStart)
+                .navigationBarsPadding()
                 .padding(
                     start = OrienteerSpacing.sm,
-                    bottom = mapChromeBottom,
+                    bottom = OrienteerSpacing.sm,
                     end = MapChromeEndReserve
                 )
+                .graphicsLayer { translationY = -runPanelVisibleHeightPx }
                 .zIndex(1f)
         )
 
@@ -265,8 +330,12 @@ fun RunScreen(
                 },
                 showBack = true,
                 onBack = onNavigateBack,
-                trailingIcon = OrienteerIcons.Layers,
-                onTrailingClick = { viewModel.cycleBasemapStyle() }
+                trailingContent = {
+                    BasemapStyleMenuButton(
+                        selected = mapDisplay.basemapStyle,
+                        onSelect = viewModel::setBasemapStyle
+                    )
+                }
             )
             CompactRunMetricsBar(
                 distance = GeoUtils.formatDistance(distanceM),
@@ -279,22 +348,6 @@ fun RunScreen(
                         vertical = OrienteerSpacing.xs
                     )
             )
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.End)
-                    .padding(end = OrienteerSpacing.md, bottom = OrienteerSpacing.xs),
-                shape = MaterialTheme.shapes.extraLarge,
-                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.9f)
-            ) {
-                Text(
-                    mapStyleShortLabel(mapDisplay.basemapStyle),
-                    modifier = Modifier.padding(
-                        horizontal = OrienteerSpacing.sm,
-                        vertical = OrienteerSpacing.xs
-                    ),
-                    style = MaterialTheme.typography.labelMedium
-                )
-            }
         }
 
         RouteBottomSheet(
@@ -302,7 +355,8 @@ fun RunScreen(
                 .align(Alignment.BottomCenter)
                 .zIndex(2f),
             expanded = runPanelExpanded,
-            onExpandedChange = { runPanelExpanded = it }
+            onExpandedChange = { runPanelExpanded = it },
+            onVisibleHeightPxChanged = { runPanelVisibleHeightPx = it }
         ) {
             Column(
                 modifier = Modifier
@@ -351,12 +405,21 @@ fun RunScreen(
                                     text = "${cp.id}.",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = if (isNext) {
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
                                     modifier = Modifier.width(28.dp)
                                 )
                                 Text(
                                     text = cp.description,
                                     style = MaterialTheme.typography.bodySmall,
+                                    color = if (isNext) {
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
                                     modifier = Modifier.weight(1f)
                                 )
                             }
@@ -488,12 +551,3 @@ private fun CompactMetric(label: String, value: String) {
     }
 }
 
-@Composable
-private fun mapStyleShortLabel(style: BasemapStyle): String = when (style) {
-    BasemapStyle.STANDARD -> stringResource(R.string.map_style_standard)
-    BasemapStyle.DARK -> stringResource(R.string.map_style_dark)
-    BasemapStyle.PSEUDO_O -> stringResource(R.string.map_style_pseudo_o)
-    BasemapStyle.STREET_O -> stringResource(R.string.map_style_street_o)
-    BasemapStyle.OPEN_TOPO -> stringResource(R.string.map_style_open_topo)
-    BasemapStyle.CYCLOSM -> stringResource(R.string.map_style_cyclosm)
-}

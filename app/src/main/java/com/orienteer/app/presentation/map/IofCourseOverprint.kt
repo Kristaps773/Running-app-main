@@ -35,7 +35,9 @@ object IofCourseGeometry {
         val symbols: List<Symbol>,
         val legs: List<Pair<GeoPoint, GeoPoint>>,
         /** Radius used to break legs at symbol edges (half of control diameter). */
-        val trimRadiusM: Double
+        val trimRadiusM: Double,
+        /** Start / control / finish footprints — mid-leg lines break around these. */
+        val obstacles: List<AirLegCrossingGaps.SymbolObstacle> = emptyList()
     )
 
     fun build(
@@ -76,10 +78,40 @@ object IofCourseGeometry {
         }
 
         val rawLegs = airLegSegmentsFromCheckpoints(checkpoints)
-        val trim = controlDiameterM / 2.0
-        val legs = rawLegs.mapNotNull { (from, to) -> shortenLeg(from, to, trim, trim) }
+        val circleR = controlDiameterM / 2.0
+        // Start triangle extends past the circle radius — stop legs outside the triangle.
+        val startR = startTriangleVertexRadiusM(controlDiameterM)
+        // Endpoint trim = symbol radius only (leg should meet its own circles / triangle).
+        // Extra SYMBOL_PAD_M applies only to mid-leg pass-through gaps, not these ends.
+        val legs = rawLegs.mapIndexedNotNull { index, (from, to) ->
+            val startTrim = when {
+                index == 0 -> startR
+                else -> circleR
+            }
+            val endTrim = when {
+                index == rawLegs.lastIndex && oneWayDistinct -> circleR
+                index == rawLegs.lastIndex && !oneWayDistinct -> startR
+                else -> circleR
+            }
+            shortenLeg(from, to, startTrim, endTrim)
+        }
 
-        return CoursePlan(symbols, legs, trim)
+        val obstacles = ArrayList<AirLegCrossingGaps.SymbolObstacle>()
+        // Obstacles use geometric radius; SYMBOL_PAD_M is applied again inside the gap cutter.
+        obstacles.add(
+            AirLegCrossingGaps.SymbolObstacle(startPos, startR, triangleFacingDeg = facing)
+        )
+        checkpoints.forEach { cp ->
+            if (cp.isStart) return@forEach
+            obstacles.add(AirLegCrossingGaps.SymbolObstacle(cp.position, circleR))
+        }
+        if (oneWayDistinct) {
+            obstacles.add(
+                AirLegCrossingGaps.SymbolObstacle(checkpoints[lastIndex].position, circleR)
+            )
+        }
+
+        return CoursePlan(symbols, legs, circleR, obstacles)
     }
 
     /**
@@ -152,16 +184,33 @@ class IofCourseOverprintOverlay(
         strokePaint.strokeWidth = strokeWidthPx(mapView, diameterM)
 
         if (showLegs) {
-            plan.legs.forEach { (from, to) ->
-                projection.toPixels(OsmGeoPoint(from.latitude, from.longitude), pointA)
-                projection.toPixels(OsmGeoPoint(to.latitude, to.longitude), pointB)
-                canvas.drawLine(
-                    pointA.x.toFloat(),
-                    pointA.y.toFloat(),
-                    pointB.x.toFloat(),
-                    pointB.y.toFloat(),
-                    strokePaint
+            val halfW = strokePaint.strokeWidth * 0.5f
+            val fillPaint = Paint(strokePaint).apply { style = Paint.Style.FILL }
+            AirLegCrossingGaps.gappedPieces(plan.legs, symbols = plan.obstacles).forEach { piece ->
+                projection.toPixels(
+                    OsmGeoPoint(piece.from.latitude, piece.from.longitude),
+                    pointA
                 )
+                projection.toPixels(
+                    OsmGeoPoint(piece.to.latitude, piece.to.longitude),
+                    pointB
+                )
+                val startCut = piece.startCutBearingDeg?.let {
+                    CourseLegStroke.screenDirFromBearing(projection, piece.from, it)
+                }
+                val endCut = piece.endCutBearingDeg?.let {
+                    CourseLegStroke.screenDirFromBearing(projection, piece.to, it)
+                }
+                val outline = CourseLegStroke.beveledOutline(
+                    x0 = pointA.x.toFloat(),
+                    y0 = pointA.y.toFloat(),
+                    x1 = pointB.x.toFloat(),
+                    y1 = pointB.y.toFloat(),
+                    halfWidth = halfW,
+                    startCutDir = startCut,
+                    endCutDir = endCut
+                )
+                canvas.drawPath(outline, fillPaint)
             }
         }
 

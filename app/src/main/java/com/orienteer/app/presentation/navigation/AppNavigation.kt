@@ -200,7 +200,7 @@ fun AppNavigation(
                     basemapStyle = mapDisplay.basemapStyle,
                     useIofCourseOverprint = mapDisplay.useIofCourseOverprint,
                     resolveGps = { setupViewModel.resolveGpsForPicker() },
-                    onCycleBasemap = setupViewModel::cycleBasemapStyle,
+                    onSelectBasemap = setupViewModel::setBasemapStyle,
                     onApplySavedSet = { set ->
                         setupViewModel.applyCoursePointsSet(set)
                     },
@@ -324,7 +324,10 @@ fun AppNavigation(
                 val sessionId = backStackEntry.arguments?.getLong("sessionId") ?: return@composable
                 HistoryReplayMapScreen(
                     sessionId = sessionId,
-                    onNavigateBack = { navController.popBackStack() }
+                    onNavigateBack = { navController.popBackStack() },
+                    onRunAgain = { routeId ->
+                        navController.navigate(Screen.Map.createRoute(routeId))
+                    }
                 )
             }
         }
@@ -369,7 +372,7 @@ private fun ActiveRunBanner(
                 Icon(
                     OrienteerIcons.DirectionsRun,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
                 )
                 Text(
                     text = "Run in progress — tap to return",

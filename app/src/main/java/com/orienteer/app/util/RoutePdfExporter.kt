@@ -25,6 +25,7 @@ import com.orienteer.app.data.local.BasemapStyle
 import com.orienteer.app.presentation.map.applyBasemapStyle
 import com.orienteer.app.presentation.map.applyRouteMapOverlays
 import com.orienteer.app.presentation.map.boundingBoxForPoints
+import com.orienteer.app.presentation.map.NorthLinesOverlay
 import com.orienteer.app.presentation.map.clearRouteOverlays
 import com.orienteer.app.presentation.map.detachLocationMarker
 import com.orienteer.app.ui.theme.MapOverlayColors
@@ -100,7 +101,8 @@ object RoutePdfExporter {
             plannedPath = androidx.compose.ui.graphics.Color(0xFF2E7D32),
             actualPath = androidx.compose.ui.graphics.Color(0xFF1565C0),
             airLeg = androidx.compose.ui.graphics.Color(0xFFAD0078),
-            airLegHalo = androidx.compose.ui.graphics.Color(0x66FFFFFF)
+            airLegHalo = androidx.compose.ui.graphics.Color(0x66FFFFFF),
+            northLine = androidx.compose.ui.graphics.Color(0xD100695C)
         ),
         primaryColorArgb: Int = 0xFF2E7D32.toInt(),
         startColorArgb: Int = 0xFF00897B.toInt(),
@@ -135,6 +137,7 @@ object RoutePdfExporter {
                 prefs = mapPrefs.copy(
                     showAirLegDistanceLabels = false,
                     showWalkingPathPolyline = false,
+                    showNorthLines = false,
                     useIofCourseOverprint = true,
                     showAirLegLines = true
                 ),
@@ -204,6 +207,11 @@ object RoutePdfExporter {
 
                         val bitmap = captureMapBitmap(captureMap)
 
+                        val northMeridians = if (mapPrefs.showNorthLines) {
+                            buildPdfNorthMeridianSpec(captureMap, viewCrop, basemapStyle)
+                        } else {
+                            null
+                        }
                         val file = writePdf(
                             context = context,
                             bitmap = bitmap,
@@ -213,7 +221,8 @@ object RoutePdfExporter {
                             projectPdf = ::projectPdf,
                             printRatio = printRatio,
                             metresPerPdfPoint = mpp *
-                                (viewCrop.width() / mapRect.width().coerceAtLeast(1f))
+                                (viewCrop.width() / mapRect.width().coerceAtLeast(1f)),
+                            northMeridians = northMeridians
                         )
                         bitmap.recycle()
 
@@ -593,6 +602,63 @@ object RoutePdfExporter {
     private fun boundingBoxFromRoute(route: Route): BoundingBox? =
         boundingBoxForPoints(routePoints(route))
 
+    private data class PdfNorthMeridianSpec(
+        val longitudes: List<Double>,
+        val latSouth: Double,
+        val latNorth: Double,
+        val colorArgb: Int
+    )
+
+    /**
+     * North-line placement from the same viewport crop as the PDF map bitmap (not route bbox).
+     */
+    private fun buildPdfNorthMeridianSpec(
+        captureMap: MapView,
+        viewCrop: PdfRect,
+        basemapStyle: BasemapStyle
+    ): PdfNorthMeridianSpec? {
+        val projection = captureMap.projection ?: return null
+        val corners = listOf(
+            viewCrop.left to viewCrop.top,
+            viewCrop.right to viewCrop.top,
+            viewCrop.left to viewCrop.bottom,
+            viewCrop.right to viewCrop.bottom
+        )
+        val geos = corners.map { (x, y) ->
+            val gp = projection.fromPixels(x.toInt(), y.toInt())
+            GeoPoint(gp.latitude, gp.longitude)
+        }
+        val latSouth = geos.minOf { it.latitude }
+        val latNorth = geos.maxOf { it.latitude }
+        val lonWest = geos.minOf { it.longitude }
+        val lonEast = geos.maxOf { it.longitude }
+        val latSpan = (latNorth - latSouth).coerceAtLeast(1e-9)
+        val latSouthDraw = latSouth - latSpan * 0.40
+        val latNorthDraw = latNorth + latSpan * 0.40
+        val w = viewCrop.width().toInt().coerceAtLeast(1)
+        val h = viewCrop.height().toInt().coerceAtLeast(1)
+        val maxLines = (w / 120).coerceIn(3, 8)
+        val longitudes = NorthLinesOverlay.meridianLongitudesForViewport(
+            projection = projection,
+            widthPx = w,
+            heightPx = h,
+            lonWest = lonWest,
+            lonEast = lonEast,
+            maxLines = maxLines
+        )
+        if (longitudes.isEmpty()) return null
+        val colorArgb = when (basemapStyle) {
+            BasemapStyle.DARK -> 0xDD9AEDE0.toInt()
+            else -> 0xD100695C.toInt()
+        }
+        return PdfNorthMeridianSpec(
+            longitudes = longitudes,
+            latSouth = latSouthDraw,
+            latNorth = latNorthDraw,
+            colorArgb = colorArgb
+        )
+    }
+
     private fun writePdf(
         context: Context,
         bitmap: Bitmap,
@@ -601,7 +667,8 @@ object RoutePdfExporter {
         controlSheet: ControlDescriptionSheet?,
         projectPdf: (GeoPoint) -> Pair<Float, Float>?,
         printRatio: Int,
-        metresPerPdfPoint: Double
+        metresPerPdfPoint: Double,
+        northMeridians: PdfNorthMeridianSpec?
     ): File? {
         val docsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
             ?: context.filesDir
@@ -632,6 +699,18 @@ object RoutePdfExporter {
                 android.graphics.RectF(mapRect.left, mapRect.top, mapRect.right, mapRect.bottom),
                 null
             )
+
+            northMeridians?.let { spec ->
+                PdfVectorCourse.drawNorthMeridians(
+                    canvas = pageCanvas,
+                    mapRect = mapRect,
+                    longitudes = spec.longitudes,
+                    latSouth = spec.latSouth,
+                    latNorth = spec.latNorth,
+                    project = projectPdf,
+                    colorArgb = spec.colorArgb
+                )
+            }
 
             // Vector purple course (mm on paper) — not thick screen polylines.
             // No distance/title header — real O-map PDFs are map-first.

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -42,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -212,14 +214,11 @@ fun SettingsScreen(
             }
             Column(
                 modifier = Modifier.combinedClickable(
-                    onClick = {},
+                    onClick = { detailDialog = presetTitle to presetDetail },
                     onLongClick = { detailDialog = presetTitle to presetDetail }
                 )
             ) {
-                Text(
-                    text = presetTitle,
-                    style = MaterialTheme.typography.titleSmall
-                )
+                SettingsExplainableTitle(title = presetTitle)
                 Text(
                     text = stringResource(R.string.settings_route_preset_brief),
                     style = MaterialTheme.typography.bodySmall,
@@ -237,11 +236,11 @@ fun SettingsScreen(
             val airDetail = stringResource(R.string.settings_air_tolerance_hint)
             Column(
                 modifier = Modifier.combinedClickable(
-                    onClick = {},
+                    onClick = { detailDialog = airTitle to airDetail },
                     onLongClick = { detailDialog = airTitle to airDetail }
                 )
             ) {
-                Text(text = airTitle, style = MaterialTheme.typography.titleSmall)
+                SettingsExplainableTitle(title = airTitle)
                 Text(
                     text = stringResource(R.string.settings_air_tolerance_brief),
                     style = MaterialTheme.typography.bodySmall,
@@ -267,11 +266,11 @@ fun SettingsScreen(
             val pathDetail = stringResource(R.string.settings_path_ratio_hint)
             Column(
                 modifier = Modifier.combinedClickable(
-                    onClick = {},
+                    onClick = { detailDialog = pathTitle to pathDetail },
                     onLongClick = { detailDialog = pathTitle to pathDetail }
                 )
             ) {
-                Text(text = pathTitle, style = MaterialTheme.typography.titleSmall)
+                SettingsExplainableTitle(title = pathTitle)
                 Text(
                     text = stringResource(R.string.settings_path_ratio_brief),
                     style = MaterialTheme.typography.bodySmall,
@@ -329,6 +328,14 @@ fun SettingsScreen(
                 onShowDetail = { title, body -> detailDialog = title to body }
             )
             SettingsSwitchRow(
+                title = stringResource(R.string.settings_show_north_lines),
+                brief = stringResource(R.string.settings_show_north_lines_brief),
+                detail = stringResource(R.string.settings_show_north_lines_sub),
+                checked = m.showNorthLines,
+                onCheckedChange = { viewModel.setShowNorthLines(it) },
+                onShowDetail = { title, body -> detailDialog = title to body }
+            )
+            SettingsSwitchRow(
                 title = stringResource(R.string.settings_show_you_are_here),
                 brief = stringResource(R.string.settings_show_you_are_here_brief),
                 detail = stringResource(R.string.settings_show_you_are_here_sub),
@@ -358,11 +365,11 @@ fun SettingsScreen(
                 modifier = Modifier
                     .padding(bottom = 8.dp)
                     .combinedClickable(
-                        onClick = {},
+                        onClick = { detailDialog = mapStyleTitle to mapStyleDetail },
                         onLongClick = { detailDialog = mapStyleTitle to mapStyleDetail }
                     )
             ) {
-                Text(text = mapStyleTitle, style = MaterialTheme.typography.titleSmall)
+                SettingsExplainableTitle(title = mapStyleTitle)
                 Text(
                     text = stringResource(R.string.settings_map_style_brief),
                     style = MaterialTheme.typography.bodySmall,
@@ -524,7 +531,6 @@ private fun BasemapStyleChips(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             listOf(
-                BasemapStyle.STREET_O,
                 BasemapStyle.OPEN_TOPO,
                 BasemapStyle.CYCLOSM
             ).forEach { style ->
@@ -549,7 +555,6 @@ private fun BasemapStyleChip(
                     BasemapStyle.STANDARD -> stringResource(R.string.map_style_standard)
                     BasemapStyle.DARK -> stringResource(R.string.map_style_dark)
                     BasemapStyle.PSEUDO_O -> stringResource(R.string.map_style_pseudo_o)
-                    BasemapStyle.STREET_O -> stringResource(R.string.map_style_street_o)
                     BasemapStyle.OPEN_TOPO -> stringResource(R.string.map_style_open_topo)
                     BasemapStyle.CYCLOSM -> stringResource(R.string.map_style_cyclosm)
                 }
@@ -628,27 +633,40 @@ private fun SettingsSwitchRow(
 ) {
     ListItem(
         headlineContent = {
-            Text(
-                title,
+            Column(
                 modifier = Modifier.combinedClickable(
-                    onClick = {},
+                    onClick = { onShowDetail(title, detail) },
                     onLongClick = { onShowDetail(title, detail) }
                 )
-            )
-        },
-        supportingContent = {
-            Text(
-                brief,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.combinedClickable(
-                    onClick = {},
-                    onLongClick = { onShowDetail(title, detail) }
+            ) {
+                SettingsExplainableTitle(title = title)
+                Text(
+                    brief,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp)
                 )
-            )
+            }
         },
         trailingContent = {
             Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
         },
         modifier = Modifier.padding(vertical = 4.dp)
     )
+}
+
+@Composable
+private fun SettingsExplainableTitle(title: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(text = title, style = MaterialTheme.typography.titleSmall)
+        Icon(
+            imageVector = OrienteerIcons.InfoOutline,
+            contentDescription = stringResource(R.string.settings_hold_for_detail),
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
 }

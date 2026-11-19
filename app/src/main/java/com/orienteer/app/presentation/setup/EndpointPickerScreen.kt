@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
@@ -37,12 +36,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.orienteer.app.R
 import com.orienteer.app.data.local.BasemapStyle
 import com.orienteer.app.data.model.GeoPoint
 import com.orienteer.app.domain.CourseEndpoints
@@ -50,6 +47,7 @@ import com.orienteer.app.domain.CoursePointsCatalog
 import com.orienteer.app.domain.CoursePointsSet
 import com.orienteer.app.domain.LockedCoursePoints
 import com.orienteer.app.presentation.components.PrimaryGreenButton
+import com.orienteer.app.presentation.map.BasemapStyleMenuButton
 import com.orienteer.app.presentation.map.CheckpointMarkerIcon
 import com.orienteer.app.presentation.map.CourseEndpointMarkerIcon
 import com.orienteer.app.presentation.map.IOF_PURPLE_ARGB
@@ -58,6 +56,7 @@ import com.orienteer.app.presentation.map.MapChromeEndReserve
 import com.orienteer.app.presentation.map.MapZoomControls
 import com.orienteer.app.presentation.map.applyBasemapStyle
 import com.orienteer.app.presentation.map.disableBuiltInZoomButtons
+import com.orienteer.app.presentation.map.enableRotationGestures
 import com.orienteer.app.ui.icons.OrienteerIcons
 import com.orienteer.app.ui.theme.OrienteerSpacing
 import com.orienteer.app.util.GeoUtils
@@ -91,7 +90,7 @@ fun EndpointPickerScreen(
     /** Same setting as map preview — classic IOF purple vs filled app badges. */
     useIofCourseOverprint: Boolean = false,
     resolveGps: suspend () -> GeoPoint?,
-    onCycleBasemap: () -> Unit,
+    onSelectBasemap: (BasemapStyle) -> Unit,
     onApplySavedSet: (CoursePointsSet) -> Unit = {},
     onDeleteFavorite: (String) -> Unit = {},
     onSaveFavorite: suspend (CoursePointsSet) -> List<CoursePointsSet>? = { null },
@@ -357,15 +356,10 @@ fun EndpointPickerScreen(
                         text = "Course points",
                         style = MaterialTheme.typography.titleMedium
                     )
-                    TextButton(onClick = onCycleBasemap) {
-                        Icon(
-                            imageVector = OrienteerIcons.Layers,
-                            contentDescription = stringResource(R.string.settings_map_style_title),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(basemapShortLabel(basemapStyle), style = MaterialTheme.typography.labelMedium)
-                    }
+                    BasemapStyleMenuButton(
+                        selected = basemapStyle,
+                        onSelect = onSelectBasemap
+                    )
                 }
                 Row(
                     modifier = Modifier
@@ -549,6 +543,7 @@ fun EndpointPickerScreen(
                         applyBasemapStyle(this, ctx, basemapStyle)
                         disableBuiltInZoomButtons()
                         setMultiTouchControls(true)
+                        enableRotationGestures()
                         controller.setZoom(15.0)
                         val center = start ?: GeoPoint(56.95, 24.10)
                         controller.setCenter(OsmGeoPoint(center.latitude, center.longitude))
@@ -773,14 +768,4 @@ fun EndpointPickerScreen(
             }
         )
     }
-}
-
-@Composable
-private fun basemapShortLabel(style: BasemapStyle): String = when (style) {
-    BasemapStyle.STANDARD -> stringResource(R.string.map_style_standard)
-    BasemapStyle.DARK -> stringResource(R.string.map_style_dark)
-    BasemapStyle.PSEUDO_O -> stringResource(R.string.map_style_pseudo_o)
-    BasemapStyle.STREET_O -> stringResource(R.string.map_style_street_o)
-    BasemapStyle.OPEN_TOPO -> stringResource(R.string.map_style_open_topo)
-    BasemapStyle.CYCLOSM -> stringResource(R.string.map_style_cyclosm)
 }

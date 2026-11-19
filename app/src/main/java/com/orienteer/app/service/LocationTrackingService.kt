@@ -22,6 +22,7 @@ import com.orienteer.app.data.repository.RouteRepository
 import com.orienteer.app.data.repository.RunRepository
 import com.orienteer.app.BuildConfig
 import com.orienteer.app.domain.RunPersistOnce
+import com.orienteer.app.domain.RunRollingPace
 import com.orienteer.app.domain.usecase.TrackRunUseCase
 import com.orienteer.app.util.GeoUtils
 import dagger.hilt.android.AndroidEntryPoint
@@ -233,7 +234,7 @@ class LocationTrackingService : LifecycleService() {
     private fun startTracking() {
         if (trackingJob?.isActive == true) return
         trackingJob = lifecycleScope.launch {
-            locationRepository.locationUpdates(intervalMs = 2_000L).collect { point ->
+            locationRepository.locationUpdates(intervalMs = RUN_LOCATION_INTERVAL_MS).collect { point ->
                 processLocation(point)
             }
         }
@@ -400,7 +401,13 @@ class LocationTrackingService : LifecycleService() {
     private fun updateNotification(session: RunSession) {
         val distance = GeoUtils.formatDistance(session.totalDistanceM)
         val time = GeoUtils.formatDuration(session.activeElapsedMs())
-        val pace = GeoUtils.formatRunPace(session.totalDistanceM, session.activeElapsedMs())
+        val pace = RunRollingPace.formatDisplayPace(
+            points = session.trackedPoints,
+            timestampsMs = session.trackedPointTimestampsMs,
+            nowMs = System.currentTimeMillis(),
+            totalDistanceM = session.totalDistanceM,
+            totalElapsedMs = session.activeElapsedMs()
+        )
         val checkpointLine = checkpointProgressLabel(session)
         val pausedLabel = if (session.isPaused) getString(R.string.run_paused) else null
         val nextDetail = nextCheckpointDetail(session)
@@ -568,5 +575,7 @@ class LocationTrackingService : LifecycleService() {
         private const val REQUEST_RESUME = 2
         private const val REQUEST_STOP = 3
         private const val REQUEST_SKIP = 4
+        /** Live track + “you are here” — ~1s so walking does not outrun the marker. */
+        private const val RUN_LOCATION_INTERVAL_MS = 1_000L
     }
 }

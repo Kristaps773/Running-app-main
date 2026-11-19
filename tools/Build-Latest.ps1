@@ -83,20 +83,33 @@ $gradlew = Join-Path $ProjectRoot "gradlew.bat"
 if ($phones.Count -gt 0) {
     $serial = $phones[0]
     Write-Host "Phone connected: $serial" -ForegroundColor Green
-    Write-Host "Building + installing DEBUG..." -ForegroundColor Yellow
+    Write-Host "Building DEBUG APK (phone only — emulators skipped)..." -ForegroundColor Yellow
     Write-Host ""
 
-    & $gradlew ":app:installDebug" "-Pandroid.injected.invoked.from.ide=true"
+    & $gradlew ":app:assembleDebug"
     if ($LASTEXITCODE -ne 0) {
         Write-Host ""
-        Write-Host "DEBUG install FAILED (exit $LASTEXITCODE)." -ForegroundColor Red
+        Write-Host "DEBUG build FAILED (exit $LASTEXITCODE)." -ForegroundColor Red
         exit $LASTEXITCODE
     }
 
     $apk = Join-Path $ProjectRoot "app\build\outputs\apk\debug\app-debug.apk"
+    if (-not (Test-Path $apk)) {
+        Write-Host "ERROR: APK not found at $apk" -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host "Installing on $serial ..." -ForegroundColor Yellow
+    & $adb -s $serial install -r $apk
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        Write-Host "DEBUG install FAILED on $serial (exit $LASTEXITCODE)." -ForegroundColor Red
+        exit $LASTEXITCODE
+    }
+
     Write-Host ""
     Write-Host "DEBUG installed on $serial" -ForegroundColor Green
-    if (Test-Path $apk) { Write-Host "APK: $apk" }
+    Write-Host "APK: $apk"
 
     # Launch app if possible
     & $adb -s $serial shell am start -n "com.orienteer.app.debug/com.orienteer.app.MainActivity" 2>$null | Out-Null
@@ -106,6 +119,52 @@ if ($phones.Count -gt 0) {
 Write-Host "No phone connected." -ForegroundColor DarkYellow
 Write-Host "Building signed RELEASE AAB (ready version)..." -ForegroundColor Yellow
 Write-Host ""
+
+$gradleFile = Join-Path $ProjectRoot "app\build.gradle.kts"
+$outDir = Join-Path $ProjectRoot "store-assets\releases"
+New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+function Get-AppVersions {
+    param([string]$GradleText)
+    $name = if ($GradleText -match 'versionName\s*=\s*"([^"]+)"') { $Matches[1] } else { "0.0.0" }
+    $code = if ($GradleText -match 'versionCode\s*=\s*(\d+)') { [int]$Matches[1] } else { 0 }
+    return @{ Name = $name; Code = $code }
+}
+
+function Get-HighestLocalVersionCode {
+    param([string]$ReleasesDir)
+    $max = 0
+    Get-ChildItem $ReleasesDir -Filter "OrienteerRun-*-vc*.aab" -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($_.Name -match '-vc(\d+)\.aab$') {
+            $n = [int]$Matches[1]
+            if ($n -gt $max) { $max = $n }
+        }
+    }
+    return $max
+}
+
+function Bump-PatchVersionName {
+    param([string]$VersionName)
+    if ($VersionName -match '^(\d+)\.(\d+)\.(\d+)(.*)$') {
+        $patch = [int]$Matches[3] + 1
+        return "$($Matches[1]).$($Matches[2]).$patch$($Matches[4])"
+    }
+    return "$VersionName.1"
+}
+
+# Every release AAB build gets a new version (Play never accepts reused versionCodes).
+$gradleText = Get-Content $gradleFile -Raw
+$versions = Get-AppVersions -GradleText $gradleText
+$highestLocal = Get-HighestLocalVersionCode -ReleasesDir $outDir
+$baseCode = [Math]::Max($versions.Code, $highestLocal)
+$newCode = $baseCode + 1
+$newName = Bump-PatchVersionName -VersionName $versions.Name
+Write-Host "Auto-bump version for this release build:" -ForegroundColor Yellow
+Write-Host "  $($versions.Name) (vc$($versions.Code)) -> $newName (vc$newCode)"
+$updated = $gradleText -replace 'versionCode\s*=\s*\d+', "versionCode = $newCode"
+$updated = $updated -replace 'versionName\s*=\s*"[^"]+"', "versionName = `"$newName`""
+[System.IO.File]::WriteAllText($gradleFile, $updated)
+$versions = @{ Name = $newName; Code = $newCode }
 
 & $gradlew ":app:bundleRelease"
 if ($LASTEXITCODE -ne 0) {
@@ -123,16 +182,16 @@ $aab = Get-ChildItem $releaseDir -Filter "*.aab" -ErrorAction SilentlyContinue |
 Write-Host ""
 Write-Host "RELEASE build OK" -ForegroundColor Green
 if ($aab) {
-    $gradleFile = Join-Path $ProjectRoot "app\build.gradle.kts"
+    # Re-read in case Gradle/other tooling changed nothing; use planned versions.
     $gradleText = Get-Content $gradleFile -Raw
-    $versionName = if ($gradleText -match 'versionName\s*=\s*"([^"]+)"') { $Matches[1] } else { "unknown" }
-    $versionCode = if ($gradleText -match 'versionCode\s*=\s*(\d+)') { $Matches[1] } else { "0" }
+    $versions = Get-AppVersions -GradleText $gradleText
+    $versionName = $versions.Name
+    $versionCode = $versions.Code
 
-    $outDir = Join-Path $ProjectRoot "store-assets\releases"
-    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     $copyTo = Join-Path $outDir "OrienteerRun-$versionName-vc$versionCode.aab"
     Copy-Item -Force $aab.FullName $copyTo
     Write-Host "Saved: $copyTo" -ForegroundColor Green
+    Write-Host "Upload this AAB to Play (versionCode $versionCode)." -ForegroundColor Cyan
     Start-Process explorer.exe "/select,`"$copyTo`""
 } else {
     Write-Host "Bundle folder: $releaseDir"

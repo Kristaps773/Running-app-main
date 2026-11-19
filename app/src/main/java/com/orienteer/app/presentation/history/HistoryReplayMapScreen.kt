@@ -73,6 +73,7 @@ import java.util.Locale
 fun HistoryReplayMapScreen(
     sessionId: Long,
     onNavigateBack: () -> Unit,
+    onRunAgain: (String) -> Unit,
     viewModel: HistoryViewModel = hiltViewModel()
 ) {
     val uiState = viewModel.uiState.collectAsStateWithLifecycle().value
@@ -412,6 +413,10 @@ fun HistoryReplayMapScreen(
                     }
                 }
 
+                OrienteerPrimaryButton(
+                    text = "Run again",
+                    onClick = { onRunAgain(summary.routeId) }
+                )
                 OrienteerGhostButton(
                     text = exportGpxLabel,
                     onClick = {

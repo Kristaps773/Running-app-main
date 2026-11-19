@@ -29,7 +29,6 @@ import com.orienteer.app.ui.components.OrienteerGhostButton
 import com.orienteer.app.presentation.setup.SetupViewModel
 import com.orienteer.app.ui.theme.OrienteerSpacing
 import com.orienteer.app.ui.theme.mapOverlayColors
-import com.orienteer.app.data.local.BasemapStyle
 import com.orienteer.app.domain.ProAccess
 import com.orienteer.app.util.GeoUtils
 import org.osmdroid.util.GeoPoint as OsmGeoPoint
@@ -50,6 +49,16 @@ fun MapScreen(
     val generationRunning = setupUiState is SetupUiState.GeneratingRoute ||
         setupUiState is SetupUiState.RefiningRoute
     var mapViewRef by remember { mutableStateOf<MapView?>(null) }
+    val findMeActions = remember {
+        object {
+            var recenter: () -> Unit = {}
+            var resetNorth: () -> Unit = {}
+            val clicks = MapFindMeClicks(
+                onFindMe = { recenter() },
+                onResetNorth = { resetNorth() }
+            )
+        }
+    }
     var routeSheetExpanded by remember {
         mutableStateOf(!(BuildConfig.DEBUG && ScreenshotDemoMode.collapseSheetsForCapture))
     }
@@ -94,8 +103,12 @@ fun MapScreen(
                     title = "Route Preview",
                     showBack = true,
                     onBack = onNavigateBack,
-                    trailingIcon = OrienteerIcons.Layers,
-                    onTrailingClick = { viewModel.cycleBasemapStyle() },
+                    trailingContent = {
+                        BasemapStyleMenuButton(
+                            selected = mapPrefs.basemapStyle,
+                            onSelect = viewModel::setBasemapStyle
+                        )
+                    },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .statusBarsPadding()
@@ -147,21 +160,6 @@ fun MapScreen(
                     }
                 }
 
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .statusBarsPadding()
-                        .padding(top = 64.dp, end = OrienteerSpacing.md),
-                    shape = MaterialTheme.shapes.extraLarge,
-                    color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.9f)
-                ) {
-                    Text(
-                        mapStyleShortLabel(mapPrefs.basemapStyle),
-                        modifier = Modifier.padding(horizontal = OrienteerSpacing.sm, vertical = OrienteerSpacing.xs),
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
-
                 MapAttributionBar(
                     basemapStyle = mapPrefs.basemapStyle,
                     modifier = Modifier
@@ -196,17 +194,26 @@ fun MapScreen(
                         onZoomIn = { mapViewRef?.controller?.zoomIn() },
                         onZoomOut = { mapViewRef?.controller?.zoomOut() }
                     )
+                    findMeActions.recenter = {
+                        val center = route.startPoint
+                        mapViewRef?.centerOnVisibleArea(
+                            OsmGeoPoint(center.latitude, center.longitude),
+                            routeSheetVisibleHeightPx
+                        )
+                    }
+                    findMeActions.resetNorth = {
+                        mapViewRef?.mapOrientation = 0f
+                        mapViewRef?.invalidate()
+                    }
                     FloatingActionButton(
-                        onClick = {
-                            val center = route.startPoint
-                            mapViewRef?.controller?.setCenter(
-                                OsmGeoPoint(center.latitude, center.longitude)
-                            )
-                        },
+                        onClick = { findMeActions.clicks.onClick() },
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                         contentColor = MaterialTheme.colorScheme.primary
                     ) {
-                        Icon(OrienteerIcons.MyLocation, contentDescription = "Recenter")
+                        Icon(
+                            OrienteerIcons.MyLocation,
+                            contentDescription = stringResource(R.string.map_recenter)
+                        )
                     }
                 }
 
@@ -358,16 +365,6 @@ private fun rememberSetupUiState(setupViewModel: SetupViewModel?): SetupUiState?
     if (setupViewModel == null) return null
     val state by setupViewModel.uiState.collectAsStateWithLifecycle()
     return state
-}
-
-@Composable
-private fun mapStyleShortLabel(style: BasemapStyle): String = when (style) {
-    BasemapStyle.STANDARD -> stringResource(R.string.map_style_standard)
-    BasemapStyle.DARK -> stringResource(R.string.map_style_dark)
-    BasemapStyle.PSEUDO_O -> stringResource(R.string.map_style_pseudo_o)
-    BasemapStyle.STREET_O -> stringResource(R.string.map_style_street_o)
-    BasemapStyle.OPEN_TOPO -> stringResource(R.string.map_style_open_topo)
-    BasemapStyle.CYCLOSM -> stringResource(R.string.map_style_cyclosm)
 }
 
 private fun Modifier.mapVignette(background: Color): Modifier = drawWithContent {

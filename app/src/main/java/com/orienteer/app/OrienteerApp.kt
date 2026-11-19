@@ -1,6 +1,7 @@
 package com.orienteer.app
 
 import android.app.Application
+import com.orienteer.app.debug.AgentDebugLog
 import dagger.hilt.android.HiltAndroidApp
 import io.sentry.android.core.SentryAndroid
 import org.osmdroid.config.Configuration
@@ -10,6 +11,9 @@ class OrienteerApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // #region agent log
+        AgentDebugLog.install(this)
+        // #endregion
         initSentry()
         Configuration.getInstance().apply {
             userAgentValue = packageName

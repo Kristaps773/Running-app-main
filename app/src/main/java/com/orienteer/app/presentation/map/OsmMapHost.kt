@@ -33,6 +33,7 @@ internal const val LOCATION_MARKER_TITLE = "__user_location__"
 
 /** Temporarily remove the user-location marker (for PDF capture). Returns it for restore. */
 fun MapView.detachLocationMarker(): Marker? {
+    SmoothLocationMarker.cancel(this)
     val existing = overlays
         .filterIsInstance<Marker>()
         .firstOrNull { it.title == LOCATION_MARKER_TITLE }
@@ -53,8 +54,9 @@ internal fun routeOverlayFingerprint(
     route: Route,
     prefs: MapDisplayPreferences,
     basemapStyle: BasemapStyle = prefs.basemapStyle,
-    pathLeadBucket: Int? = null,
-    guidancePointCount: Int = 0
+    pathLeadActive: Boolean = false,
+    guidancePointCount: Int = 0,
+    nextCheckpointIdx: Int = -1
 ): String = buildString {
     append(route.id)
     append('|')
@@ -72,13 +74,19 @@ internal fun routeOverlayFingerprint(
     append('|')
     append(prefs.showWalkingPathPolyline)
     append('|')
+    append(prefs.showNorthLines)
+    append('|')
     append(prefs.useIofCourseOverprint)
     append('|')
     append(basemapStyle.name)
     append('|')
-    append(pathLeadBucket ?: -1)
+    // Lead geometry refreshes every GPS fix via [updatePathLeadOverlay]; fingerprint
+    // only tracks lead on/off + guidance identity (not runner progress).
+    append(if (pathLeadActive) 1 else 0)
     append('|')
     append(guidancePointCount)
+    append('|')
+    append(nextCheckpointIdx)
 }
 
 /**
@@ -96,12 +104,17 @@ fun OsmMapHost(
     initialZoom: Double = 15.0,
     /** When set, draw directional gradient on this polyline (active-run lead). PDF omits. */
     pathLead: PathLeadDrawState? = null,
-    /** Heading-up follow while locked; ignored when null / free-look. */
+    /** Follow while locked; pans only (does not change map rotation). */
     followCamera: Boolean = false,
+    /** Camera follow target; defaults to [currentLocation] when null. */
+    followLocation: GeoPoint? = null,
     mapBearingDeg: Float = 0f,
+    /** Bottom sheet / dashboard height so follow centers in the visible map band. */
+    followBottomInsetPx: Float = 0f,
     onUserMapGesture: () -> Unit = {},
     onMapReady: (MapView) -> Unit = {}
 ) {
+    val cameraFollowPoint = followLocation ?: currentLocation
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var mapView by remember { mutableStateOf<MapView?>(null) }
@@ -110,29 +123,21 @@ fun OsmMapHost(
     val startArgb = MaterialTheme.colorScheme.tertiary.toArgb()
     val gestureHolder = remember { object { var onGesture: () -> Unit = {} } }
     gestureHolder.onGesture = onUserMapGesture
-    val pathLeadBucket = remember(pathLead?.progressLocation, pathLead?.guidancePolyline) {
-        val lead = pathLead ?: return@remember null
-        if (lead.guidancePolyline.size < 2) return@remember null
-        val loc = lead.progressLocation ?: lead.guidancePolyline.first()
-        val progress = com.orienteer.app.domain.RoutePolylineProgress.project(
-            lead.guidancePolyline,
-            loc
-        )
-        com.orienteer.app.domain.RoutePolylineProgress.progressBucket(progress.distanceAlongM)
-    }
     val overlayFingerprint = remember(
         route,
         mapPrefs,
         basemapStyle,
-        pathLeadBucket,
-        pathLead?.guidancePolyline?.size
+        pathLead != null,
+        pathLead?.guidancePolyline?.size,
+        pathLead?.nextCheckpointIdx
     ) {
         routeOverlayFingerprint(
             route,
             mapPrefs,
             basemapStyle,
-            pathLeadBucket = pathLeadBucket,
-            guidancePointCount = pathLead?.guidancePolyline?.size ?: 0
+            pathLeadActive = pathLead != null && (pathLead.guidancePolyline.size >= 2),
+            guidancePointCount = pathLead?.guidancePolyline?.size ?: 0,
+            nextCheckpointIdx = pathLead?.nextCheckpointIdx ?: -1
         )
     }
 
@@ -167,6 +172,9 @@ fun OsmMapHost(
                     setMultiTouchControls(interactive)
                     isClickable = interactive
                     isFocusable = interactive
+                    if (interactive) {
+                        enableRotationGestures()
+                    }
                     controller.setZoom(initialZoom)
                     controller.setCenter(
                         OsmGeoPoint(route.startPoint.latitude, route.startPoint.longitude)
@@ -203,7 +211,7 @@ fun OsmMapHost(
                             basemapStyle = basemapStyle,
                             pathLead = pathLead
                         )
-                        updateLocationMarker(this, currentLocation)
+                        SmoothLocationMarker.apply(this, currentLocation)
                     }
                 }
             },
@@ -229,17 +237,71 @@ fun OsmMapHost(
                         basemapStyle = basemapStyle,
                         pathLead = pathLead
                     )
+                    val loc = pathLead?.progressLocation
+                    view.setTag(
+                        R.id.map_tag_path_lead_key,
+                        if (pathLead == null) null
+                        else "${pathLead.nextCheckpointIdx}|${pathLead.guidancePolyline.size}|" +
+                            (loc?.let { "${it.latitude},${it.longitude}" } ?: "none")
+                    )
+                } else if (pathLead != null) {
+                    // Refresh lead on every GPS fix (not the old 70 m progress bucket).
+                    val loc = pathLead.progressLocation
+                    val leadKey = buildString {
+                        append(pathLead.nextCheckpointIdx)
+                        append('|')
+                        append(pathLead.guidancePolyline.size)
+                        append('|')
+                        if (loc == null) append("none") else {
+                            append(loc.latitude)
+                            append(',')
+                            append(loc.longitude)
+                        }
+                    }
+                    val lastLeadKey = view.getTag(R.id.map_tag_path_lead_key) as? String
+                    if (lastLeadKey != leadKey) {
+                        view.setTag(R.id.map_tag_path_lead_key, leadKey)
+                        updatePathLeadOverlay(view, pathLead, basemapStyle)
+                        // #region agent log
+                        com.orienteer.app.debug.AgentDebugLog.log(
+                            hypothesisId = "F",
+                            location = "OsmMapHost.update.pathLead",
+                            message = "lead refreshed with location",
+                            data = mapOf(
+                                "leadKey" to leadKey,
+                                "guidancePts" to pathLead.guidancePolyline.size,
+                                "cpIdx" to pathLead.nextCheckpointIdx
+                            ),
+                            runId = "post-fix"
+                        )
+                        // #endregion
+                    }
                 }
 
-                updateLocationMarker(view, currentLocation)
+                SmoothLocationMarker.apply(view, currentLocation)
 
-                if (followCamera && currentLocation != null) {
-                    view.setTag(R.id.map_tag_suppress_gesture, true)
-                    view.controller.setCenter(
-                        OsmGeoPoint(currentLocation.latitude, currentLocation.longitude)
-                    )
-                    view.mapOrientation = mapBearingDeg
-                    view.post { view.setTag(R.id.map_tag_suppress_gesture, false) }
+                if (followCamera && cameraFollowPoint != null) {
+                    val followKey =
+                        "${cameraFollowPoint.latitude},${cameraFollowPoint.longitude}"
+                    val lastFollow = view.getTag(R.id.map_tag_follow_target) as? String
+                    if (lastFollow != followKey) {
+                        view.setTag(R.id.map_tag_follow_target, followKey)
+                        view.setTag(R.id.map_tag_suppress_gesture, true)
+                        // Same target + duration as the puck glide so camera tracks with it.
+                        view.animateCenterOnVisibleArea(
+                            OsmGeoPoint(
+                                cameraFollowPoint.latitude,
+                                cameraFollowPoint.longitude
+                            ),
+                            followBottomInsetPx,
+                            SmoothLocationMarker.ANIM_MS
+                        )
+                        view.postDelayed({
+                            view.setTag(R.id.map_tag_suppress_gesture, false)
+                        }, SmoothLocationMarker.ANIM_MS)
+                    }
+                } else {
+                    view.setTag(R.id.map_tag_follow_target, null)
                 }
             }
         )
@@ -267,48 +329,6 @@ fun OsmSimpleMapHost(
     )
 }
 
-private fun updateLocationMarker(mapView: MapView, location: GeoPoint?) {
-    val existing = mapView.overlays
-        .filterIsInstance<Marker>()
-        .firstOrNull { it.title == LOCATION_MARKER_TITLE }
-
-    if (location == null) {
-        if (existing != null) {
-            mapView.overlays.remove(existing)
-            mapView.invalidate()
-        }
-        return
-    }
-
-    val osmPoint = OsmGeoPoint(location.latitude, location.longitude)
-    val icon = YouAreHereMarkerIcon.create(mapView.context)
-    if (existing != null) {
-        var dirty = false
-        if (existing.icon !== icon) {
-            existing.icon = icon
-            dirty = true
-        }
-        val prev = existing.position
-        if (prev.latitude != osmPoint.latitude || prev.longitude != osmPoint.longitude) {
-            existing.position = osmPoint
-            dirty = true
-        }
-        if (dirty) mapView.invalidate()
-        return
-    }
-
-    mapView.overlays.add(
-        Marker(mapView).apply {
-            position = osmPoint
-            title = LOCATION_MARKER_TITLE
-            setIcon(icon)
-            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-            setOnMarkerClickListener { _, _ -> true }
-            infoWindow = null
-        }
-    )
-    mapView.invalidate()
-}
 
 /** Replay map: planned air legs (dashed) + actual walking path (solid). */
 @Composable
@@ -361,10 +381,12 @@ fun OsmReplayMapHost(
             update = { view ->
                 mapView = view
                 clearRouteOverlays(view)
-                view.addOrienteeringAirLegOverlays(
-                    airLegSegmentsFromCheckpoints(route.checkpoints),
-                    airColor,
-                    airHaloColor
+                view.overlays.add(
+                    AirLegsOverlay(
+                        checkpoints = route.checkpoints,
+                        airColorArgb = airColor,
+                        haloColorArgb = airHaloColor
+                    )
                 )
                 if (route.polylinePoints.isNotEmpty()) {
                     addWalkingPathPolyline(

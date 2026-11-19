@@ -9,6 +9,7 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.TilesOverlay
+import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 
 private class OomapContourTilesOverlay(context: Context) : TilesOverlay(
     MapTileProviderBasic(context, OomapLidar5Contours),
@@ -50,7 +51,7 @@ private val CyclOsmRaster = XYTileSource(
     "© OpenStreetMap contributors © CyclOSM"
 )
 
-/** OOMap public LiDAR-5 contour XYZ (transparent overlay). Pseud-O/Street-O full rasters are not public. */
+/** OOMap public LiDAR-5 contour XYZ (transparent overlay). Pseud-O full rasters are not public. */
 private val OomapLidar5Contours = XYTileSource(
     "OOMapLidar5",
     0,
@@ -65,8 +66,7 @@ fun baseBasemapTileSource(style: BasemapStyle): OnlineTileSourceBase = when (sty
     // Dark uses Mapnik + invert filter — CARTO dark_all now requires an API key.
     BasemapStyle.DARK,
     BasemapStyle.STANDARD,
-    BasemapStyle.PSEUDO_O,
-    BasemapStyle.STREET_O -> TileSourceFactory.MAPNIK
+    BasemapStyle.PSEUDO_O -> TileSourceFactory.MAPNIK
     BasemapStyle.OPEN_TOPO -> OpenTopoMapRaster
     BasemapStyle.CYCLOSM -> CyclOsmRaster
 }
@@ -79,8 +79,6 @@ fun basemapAttributionLine(style: BasemapStyle): String = when (style) {
         "© OpenStreetMap contributors (inverted)"
     BasemapStyle.PSEUDO_O ->
         "© OpenStreetMap contributors · Contours © OpenOrienteeringMap (LiDAR where available) · Pseud-O approximation"
-    BasemapStyle.STREET_O ->
-        "© OpenStreetMap contributors · Street-O approximation (not surveyed ISSprOM)"
     BasemapStyle.OPEN_TOPO ->
         "© OpenStreetMap contributors, SRTM · © OpenTopoMap (CC BY-SA 3.0)"
     BasemapStyle.CYCLOSM ->
@@ -99,7 +97,9 @@ fun applyBasemapStyle(map: MapView, context: Context, style: BasemapStyle) {
     map.invalidate()
 }
 
-/** Drop route markers/polylines but keep orienteering contour tiles if present. */
+/** Drop route markers/polylines but keep contour tiles and rotation gesture. */
 fun clearRouteOverlays(map: MapView) {
-    map.overlays.removeAll { !isBasemapContourOverlay(it) }
+    map.overlays.removeAll {
+        !isBasemapContourOverlay(it) && it !is RotationGestureOverlay
+    }
 }

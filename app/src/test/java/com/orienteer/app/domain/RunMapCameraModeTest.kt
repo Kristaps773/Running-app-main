@@ -8,15 +8,8 @@ import org.junit.Test
 class RunMapCameraModeTest {
 
     @Test
-    fun startsFollowLocked_whenLeadEnabled() {
-        val s = RunMapCameraMode.initial(leadEnabled = true)
-        assertEquals(RunMapCameraMode.State.FollowLocked, s)
-    }
-
-    @Test
-    fun startsFreeLook_whenLeadDisabled() {
-        val s = RunMapCameraMode.initial(leadEnabled = false)
-        assertEquals(RunMapCameraMode.State.FreeLook, s)
+    fun startsFreeLook() {
+        assertEquals(RunMapCameraMode.State.FreeLook, RunMapCameraMode.initial())
     }
 
     @Test
@@ -48,27 +41,5 @@ class RunMapCameraModeTest {
         assertFalse(RunMapCameraMode.shouldAutoFollow(s))
         s = RunMapCameraMode.onRecenter(s)
         assertTrue(RunMapCameraMode.shouldAutoFollow(s))
-    }
-
-    @Test
-    fun leadDisabled_forcesFreeLook() {
-        assertEquals(
-            RunMapCameraMode.State.FreeLook,
-            RunMapCameraMode.onLeadEnabledChanged(
-                current = RunMapCameraMode.State.FollowLocked,
-                leadEnabled = false
-            )
-        )
-    }
-
-    @Test
-    fun leadEnabledAgain_doesNotAutoLock() {
-        assertEquals(
-            RunMapCameraMode.State.FreeLook,
-            RunMapCameraMode.onLeadEnabledChanged(
-                current = RunMapCameraMode.State.FreeLook,
-                leadEnabled = true
-            )
-        )
     }
 }

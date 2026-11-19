@@ -61,6 +61,7 @@ fun configureReplayMapInteraction(map: MapView, compactPreview: Boolean) {
         map.setMultiTouchControls(true)
         map.isClickable = true
         map.isFocusable = true
+        map.enableRotationGestures()
         val maxTileZoom = map.tileProvider.maximumZoomLevel.toDouble()
         val minTileZoom = map.tileProvider.minimumZoomLevel.toDouble()
         map.setMaxZoomLevel(maxTileZoom)

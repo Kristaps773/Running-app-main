@@ -1,6 +1,5 @@
 package com.orienteer.app.presentation.map
 
-import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.util.Log
 import android.view.ViewOutlineProvider
@@ -35,7 +34,7 @@ fun walkingPathPaintForBasemap(style: BasemapStyle): WalkingPathPaint = when (st
         strokeArgb = AndroidColor.parseColor("#E91E8C"),
         haloArgb = AndroidColor.parseColor("#FFFFFF")
     )
-    BasemapStyle.STANDARD, BasemapStyle.PSEUDO_O, BasemapStyle.STREET_O -> WalkingPathPaint(
+    BasemapStyle.STANDARD, BasemapStyle.PSEUDO_O -> WalkingPathPaint(
         strokeArgb = AndroidColor.parseColor("#0D47A1"),
         haloArgb = AndroidColor.parseColor("#FFFFFF")
     )
@@ -265,8 +264,59 @@ fun addCheckpointMarkers(
  */
 data class PathLeadDrawState(
     val guidancePolyline: List<GeoPoint>,
-    val progressLocation: GeoPoint?
+    val progressLocation: GeoPoint?,
+    /** Course-order checkpoint positions (same order as the route). */
+    val checkpointPositions: List<GeoPoint> = emptyList(),
+    /** Index of the next checkpoint the runner must visit. */
+    val nextCheckpointIdx: Int = 0
 )
+
+/** Replace only the directional lead overlay — cheap enough to run on every GPS fix. */
+fun updatePathLeadOverlay(
+    map: MapView,
+    pathLead: PathLeadDrawState?,
+    basemapStyle: BasemapStyle
+) {
+    map.overlays.removeAll { it is DirectionalWalkingPathOverlay }
+    if (pathLead == null || pathLead.guidancePolyline.size < 2) {
+        map.invalidate()
+        return
+    }
+    applyPathLeadOverlay(map, pathLead, walkingPathPaintForBasemap(basemapStyle))
+    map.invalidate()
+}
+
+private fun applyPathLeadOverlay(
+    map: MapView,
+    pathLead: PathLeadDrawState,
+    paint: WalkingPathPaint
+) {
+    val progressLoc = pathLead.progressLocation ?: pathLead.guidancePolyline.first()
+    val leadRibbon = if (pathLead.checkpointPositions.isNotEmpty()) {
+        com.orienteer.app.domain.RoutePolylineProgress.leadRunnerToNextCheckpoint(
+            polyline = pathLead.guidancePolyline,
+            runner = progressLoc,
+            checkpointPositions = pathLead.checkpointPositions,
+            nextCheckpointIdx = pathLead.nextCheckpointIdx
+        )
+    } else {
+        val progress = com.orienteer.app.domain.RoutePolylineProgress.project(
+            pathLead.guidancePolyline,
+            progressLoc
+        )
+        com.orienteer.app.domain.RoutePolylineProgress.activeLeadRibbon(
+            pathLead.guidancePolyline,
+            progress
+        )
+    }
+    map.overlays.add(
+        DirectionalWalkingPathOverlay(
+            polyline = pathLead.guidancePolyline,
+            leadRibbon = leadRibbon,
+            paintColors = paint
+        )
+    )
+}
 
 /** Draw route preview overlays: walking path, air legs, distance labels, checkpoint badges. */
 fun applyRouteMapOverlays(
@@ -285,21 +335,27 @@ fun applyRouteMapOverlays(
     val airHaloColor = mapColors.airLegHalo.toArgb()
     val useIof = prefs.useIofCourseOverprint
 
+    if (prefs.showNorthLines) {
+        // Basemap-aware (not app theme): light tiles need a darker teal; dark tiles need a bright one.
+        val northBase = when (basemapStyle) {
+            BasemapStyle.DARK -> androidx.compose.ui.graphics.Color(0xFF9AEDE0)
+            BasemapStyle.OPEN_TOPO, BasemapStyle.CYCLOSM ->
+                androidx.compose.ui.graphics.Color(0xFF004D40)
+            else -> androidx.compose.ui.graphics.Color(0xFF00695C)
+        }
+        val northAlpha = when (basemapStyle) {
+            BasemapStyle.DARK -> 0.68f
+            BasemapStyle.OPEN_TOPO, BasemapStyle.CYCLOSM -> 0.90f
+            else -> 0.82f
+        }
+        val northArgb = northBase.copy(alpha = northAlpha).toArgb()
+        map.overlays.add(NorthLinesOverlay(northArgb))
+    }
+
     if (prefs.showWalkingPathPolyline) {
         val paint = walkingPathPaintForBasemap(basemapStyle)
         if (pathLead != null && pathLead.guidancePolyline.size >= 2) {
-            val progressLoc = pathLead.progressLocation ?: pathLead.guidancePolyline.first()
-            val progress = com.orienteer.app.domain.RoutePolylineProgress.project(
-                pathLead.guidancePolyline,
-                progressLoc
-            )
-            map.overlays.add(
-                DirectionalWalkingPathOverlay(
-                    polyline = pathLead.guidancePolyline,
-                    progress = progress,
-                    paintColors = paint
-                )
-            )
+            applyPathLeadOverlay(map, pathLead, paint)
         } else if (route.polylinePoints.isNotEmpty()) {
             addWalkingPathPolyline(map, route.polylinePoints, paint)
         }
@@ -320,7 +376,14 @@ fun applyRouteMapOverlays(
     } else {
         if (prefs.showAirLegLines) {
             val legs = airLegSegments(route)
-            map.addOrienteeringAirLegOverlays(legs, airColor, airHaloColor)
+            map.overlays.add(
+                AirLegsOverlay(
+                    checkpoints = route.checkpoints,
+                    airColorArgb = airColor,
+                    haloColorArgb = airHaloColor,
+                    markerScale = markerScale
+                )
+            )
             if (prefs.showAirLegDistanceLabels) {
                 addAirLegDistanceLabels(map, route, legs)
             }
@@ -332,6 +395,10 @@ fun applyRouteMapOverlays(
             startColorArgb,
             markerScale = markerScale
         )
+    }
+    // Keep two-finger rotate above route chrome so gestures stay responsive.
+    if (map.getTag(R.id.map_tag_rotation_gesture) == true) {
+        map.enableRotationGestures()
     }
     map.invalidate()
 }
@@ -381,41 +448,6 @@ fun airLegSegmentsFromCheckpoints(checkpoints: List<Checkpoint>): List<Pair<GeoP
 
 private fun airLegSegments(route: Route): List<Pair<GeoPoint, GeoPoint>> =
     airLegSegmentsFromCheckpoints(route.checkpoints)
-
-/** Dashed magenta/purple straight legs with a light/dark halo for basemap contrast. */
-fun MapView.addOrienteeringAirLegOverlays(
-    legs: List<Pair<GeoPoint, GeoPoint>>,
-    airColor: Int,
-    haloColor: Int
-) {
-    legs.forEach { (from, to) ->
-        val points = listOf(
-            OsmGeoPoint(from.latitude, from.longitude),
-            OsmGeoPoint(to.latitude, to.longitude)
-        )
-        overlays.add(
-            Polyline(this).apply {
-                setPoints(points)
-                outlinePaint.color = haloColor
-                outlinePaint.strokeWidth = 11f
-                outlinePaint.isAntiAlias = true
-                outlinePaint.strokeCap = Paint.Cap.ROUND
-                outlinePaint.strokeJoin = Paint.Join.ROUND
-            }
-        )
-        overlays.add(
-            Polyline(this).apply {
-                setPoints(points)
-                outlinePaint.color = airColor
-                outlinePaint.strokeWidth = 5.5f
-                outlinePaint.isAntiAlias = true
-                outlinePaint.strokeCap = Paint.Cap.ROUND
-                outlinePaint.strokeJoin = Paint.Join.ROUND
-                outlinePaint.pathEffect = DashPathEffect(floatArrayOf(22f, 14f), 0f)
-            }
-        )
-    }
-}
 
 private fun addAirLegDistanceLabels(
     map: MapView,

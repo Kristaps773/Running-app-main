@@ -5,6 +5,7 @@ import com.orienteer.app.util.GeoUtils
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.abs
 
 class RoutePolylineProgressTest {
 
@@ -133,5 +134,103 @@ class RoutePolylineProgressTest {
         // Ribbon must still be one local slice, not the whole out-and-back (~400 m).
         assertTrue(ribbonLen < 250.0)
         assertEquals(0.0, GeoUtils.distanceMeters(ribbon.runnerPoint, midOut), 5.0)
+    }
+
+    @Test
+    fun projectTowardNext_outAndBack_staysOnOutboundLeg() {
+        val turn = GeoUtils.offsetPoint(origin, 200.0, 90.0)
+        val finish = origin
+        val outAndBack = listOf(
+            origin,
+            GeoUtils.offsetPoint(origin, 100.0, 90.0),
+            turn,
+            GeoUtils.offsetPoint(origin, 100.0, 90.0),
+            finish
+        )
+        val checkpoints = listOf(origin, turn, finish)
+        val midOut = GeoUtils.offsetPoint(origin, 80.0, 90.0)
+        // Next CP is the turn (index 1) — must snap on outbound (~80 m), not return (~320 m).
+        val ordered = RoutePolylineProgress.projectTowardNextCheckpoint(
+            outAndBack,
+            midOut,
+            checkpoints,
+            nextCheckpointIdx = 1
+        )
+        assertEquals(80.0, ordered.distanceAlongM, 8.0)
+        assertTrue(
+            "ordered snap should be before the turn",
+            ordered.distanceAlongM < 200.0
+        )
+        val nearest = RoutePolylineProgress.project(outAndBack, midOut)
+        // Nearest alone may flip; ordered must not follow a far return twin.
+        assertTrue(abs(ordered.distanceAlongM - nearest.distanceAlongM) < 50.0 ||
+            ordered.distanceAlongM < 150.0)
+    }
+
+    @Test
+    fun leadRunnerToNextCheckpoint_farCp_isShortLookahead_notWholeLeg() {
+        val far = GeoUtils.offsetPoint(origin, 500.0, 90.0)
+        val line = listOf(
+            origin,
+            GeoUtils.offsetPoint(origin, 250.0, 90.0),
+            far
+        )
+        val runner = GeoUtils.offsetPoint(origin, 40.0, 90.0)
+        val ribbon = RoutePolylineProgress.leadRunnerToNextCheckpoint(
+            polyline = line,
+            runner = runner,
+            checkpointPositions = listOf(origin, far),
+            nextCheckpointIdx = 1
+        )
+        assertTrue(ribbon.points.size >= 2)
+        assertEquals(0.0, GeoUtils.distanceMeters(ribbon.points.first(), runner), 1.0)
+        val len = RoutePolylineProgress.pathLengthMeters(ribbon.points)
+        assertTrue(
+            "far CP lead should stay near lookahead, was ${len}m",
+            len <= RoutePolylineProgress.LEAD_LOOKAHEAD_M + 40.0
+        )
+        assertTrue(
+            "far CP lead must not end on the checkpoint",
+            GeoUtils.distanceMeters(ribbon.points.last(), far) > 50.0
+        )
+    }
+
+    @Test
+    fun leadRunnerToNextCheckpoint_nearCp_stopsAtCheckpointCenter() {
+        val near = GeoUtils.offsetPoint(origin, 120.0, 90.0)
+        val line = listOf(
+            origin,
+            GeoUtils.offsetPoint(origin, 60.0, 90.0),
+            near
+        )
+        val runner = GeoUtils.offsetPoint(origin, 80.0, 90.0)
+        val ribbon = RoutePolylineProgress.leadRunnerToNextCheckpoint(
+            polyline = line,
+            runner = runner,
+            checkpointPositions = listOf(origin, near),
+            nextCheckpointIdx = 1
+        )
+        assertTrue(ribbon.points.size >= 2)
+        assertEquals(0.0, GeoUtils.distanceMeters(ribbon.points.first(), runner), 1.0)
+        assertEquals(0.0, GeoUtils.distanceMeters(ribbon.points.last(), near), 2.0)
+    }
+
+    @Test
+    fun orderedWaypoints_assignReturnFinishAfterTurn() {
+        val turn = GeoUtils.offsetPoint(origin, 200.0, 90.0)
+        val outAndBack = listOf(
+            origin,
+            GeoUtils.offsetPoint(origin, 100.0, 90.0),
+            turn,
+            GeoUtils.offsetPoint(origin, 100.0, 90.0),
+            origin
+        )
+        val alongs = RoutePolylineProgress.orderedWaypointAlongMeters(
+            outAndBack,
+            listOf(origin, turn, origin)
+        )
+        assertEquals(0.0, alongs[0], 5.0)
+        assertEquals(200.0, alongs[1], 8.0)
+        assertTrue("finish on return leg should be near 400 m, was ${alongs[2]}", alongs[2] > 350.0)
     }
 }

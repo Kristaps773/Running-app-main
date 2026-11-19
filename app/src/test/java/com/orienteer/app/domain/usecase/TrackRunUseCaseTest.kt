@@ -76,6 +76,7 @@ class TrackRunUseCaseTest {
         val session = RunSession(
             routeId = route.id,
             trackedPoints = listOf(GeoPoint(56.95, 24.10)),
+            trackedPointTimestampsMs = listOf(1000L),
             currentCheckpointIdx = 1
         )
         val jitter = GeoPoint(56.95001, 24.10001)
@@ -83,6 +84,44 @@ class TrackRunUseCaseTest {
         val updated = useCase(session, route, jitter, elapsedTimeMs = 2000L, timestampMs = 2000L)
 
         assertEquals(0.0, updated.totalDistanceM, 0.0001)
+        // Keep prior anchor so later hops can accumulate past the noise floor.
+        assertEquals(1, updated.trackedPoints.size)
+        assertEquals(session.trackedPoints.last(), updated.trackedPoints.last())
+    }
+
+    @Test
+    fun manySubNoiseHopsThenOneAcceptedAddsFullGap() {
+        var session = RunSession(
+            routeId = route.id,
+            trackedPoints = listOf(GeoPoint(56.95, 24.10)),
+            trackedPointTimestampsMs = listOf(0L),
+            currentCheckpointIdx = 1
+        )
+        // ~1.1 m steps (under 3 m noise floor) that together exceed 3 m.
+        val stepLat = 0.00001
+        for (i in 1..4) {
+            session = useCase(
+                session,
+                route,
+                GeoPoint(56.95 + stepLat * i, 24.10),
+                elapsedTimeMs = i * 1000L,
+                timestampMs = i * 1000L
+            )
+            assertEquals(0.0, session.totalDistanceM, 0.0001)
+            assertEquals(1, session.trackedPoints.size)
+        }
+        val accepted = useCase(
+            session,
+            route,
+            GeoPoint(56.95 + stepLat * 5, 24.10),
+            elapsedTimeMs = 5000L,
+            timestampMs = 5000L
+        )
+        assertTrue(
+            "expected full gap from first anchor, was ${accepted.totalDistanceM}",
+            accepted.totalDistanceM >= 3.0
+        )
+        assertEquals(2, accepted.trackedPoints.size)
     }
 
     @Test
@@ -90,6 +129,7 @@ class TrackRunUseCaseTest {
         val session = RunSession(
             routeId = route.id,
             trackedPoints = listOf(GeoPoint(56.95, 24.10)),
+            trackedPointTimestampsMs = listOf(1000L),
             currentCheckpointIdx = 1
         )
         val farPoint = GeoPoint(56.96, 24.11)
@@ -97,6 +137,9 @@ class TrackRunUseCaseTest {
         val updated = useCase(session, route, farPoint, elapsedTimeMs = 3000L, timestampMs = 3000L)
 
         assertEquals(0.0, updated.totalDistanceM, 0.0001)
+        // Spike re-anchors so later fixes are not stuck >50 m from a stale point.
+        assertEquals(2, updated.trackedPoints.size)
+        assertEquals(farPoint, updated.trackedPoints.last())
     }
 
     @Test

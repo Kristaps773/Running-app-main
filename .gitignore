@@ -55,3 +55,11 @@ store-assets/_play_upload/latin1/
 store-assets/_play_upload/_invoke/
 store-assets/_icon512_tmp.png
 
+
+tmp-orienteer-db/
+Thumbs.db
+
+# Local-only agent handoff (public repo — never push chat/agent context)
+CLAUDE.md
+docs/STATUS.md
+

@@ -64,6 +64,8 @@ val LightMapActualPath = Color(0xFF1B5E20)
 /** Straight control-to-control legs (orienteering overprint magenta). */
 val LightMapAirLeg = Color(0xFFAD0078)
 val LightMapAirLegHalo = Color(0xFFFFFFFF)
+/** True-north guide lines on light basemaps — darker teal for contrast on pale tiles. */
+val LightMapNorthLine = Color(0xFF00695C)
 
 // ── Dark (pine charcoal + forest CTAs) ──
 val OrienteerBackground = BrandPineCharcoal
@@ -105,3 +107,5 @@ val MapPlannedPath = Color(0xFF8A9385)
 val MapActualPath = Color(0xFF91D78A)
 val MapAirLeg = Color(0xFFFF6BE9)
 val MapAirLegHalo = Color(0xFF1A0A16)
+/** True-north guide lines on dark UI / dark tiles (bright teal for contrast). */
+val MapNorthLine = Color(0xFF9AEDE0)

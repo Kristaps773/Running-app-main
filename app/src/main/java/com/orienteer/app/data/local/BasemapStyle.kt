@@ -3,8 +3,8 @@ package com.orienteer.app.data.local
 /**
  * Selectable raster basemaps (all free for app use with attribution — see [store-assets/MAP_STYLES_LICENSES.md]).
  *
- * Pseud-O / Street-O full OOMap XYZ tiles are not publicly served; those styles use OSM Mapnik
- * (± OOMap LiDAR contour overlay) as the closest free approximation of ISSprOM/ISOM colour intent.
+ * Pseud-O full OOMap XYZ tiles are not publicly served; the style uses OSM Mapnik
+ * (+ OOMap LiDAR contour overlay) as the closest free approximation of ISOM colour intent.
  */
 enum class BasemapStyle {
     /** OSM Mapnik via OSMDroid default tile source. */
@@ -16,10 +16,6 @@ enum class BasemapStyle {
      * (where available). Not a surveyed ISOM map.
      */
     PSEUDO_O,
-    /**
-     * Sprint / Street-O leaning: Mapnik only (clearer urban fabric). Not a surveyed ISSprOM map.
-     */
-    STREET_O,
     /** OpenTopoMap — topography + OSM (CC BY-SA style, ODbL data). */
     OPEN_TOPO,
     /** CyclOSM — cycling/outdoors emphasis on OSM. */
@@ -29,7 +25,7 @@ enum class BasemapStyle {
         fun fromStorage(value: String?): BasemapStyle = when (value) {
             // Legacy name from earlier “O contours” style.
             "ORIENTEERING", "PSEUDO_O" -> PSEUDO_O
-            "STREET_O" -> STREET_O
+            "STREET_O" -> PSEUDO_O
             "DARK" -> DARK
             "OPEN_TOPO" -> OPEN_TOPO
             "CYCLOSM" -> CYCLOSM
@@ -38,7 +34,6 @@ enum class BasemapStyle {
         }
 
         /** Styles that approximate orienteering cartography (enable classic overprint by default). */
-        fun isOMapStyle(style: BasemapStyle): Boolean =
-            style == PSEUDO_O || style == STREET_O
+        fun isOMapStyle(style: BasemapStyle): Boolean = style == PSEUDO_O
     }
 }
